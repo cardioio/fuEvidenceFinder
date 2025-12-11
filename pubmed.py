@@ -28,13 +28,231 @@ API_ENDPOINTS = [
     "https://api.minimax.chat/v1/text/chatcompletion_v2",
     "https://api.deepseek.com/v1/chat/completions"
 ]
-API_KEY = "sk-1wLZqqkXDT9shZzgTqNRc0wNB6K4Kmu1t0kov0KA5I3auqVf"
+
+# API密钥池配置 - 多个密钥用于提高请求成功率
+API_KEYS_POOL = [
+    "sk-1wLZqqkXDT9shZzgTqNRc0wNB6K4Kmu1t0kov0KA5I3auqVf",  # 主密钥
+    "sk-19GhS2EHMvZJZrm4LYdL94KrAfIb5ckAhwH7Btcorg23zh8H",  # 备用密钥1
+    "sk-t0WZJnqINXX2LnRvPIvRvhMLIcfYtZ76UvOjHf82IGPcYRj1",  # 备用密钥2
+]
+
+# 向后兼容 - 保留原有单密钥配置
+API_KEY = API_KEYS_POOL[0]
+
+# API密钥池管理配置
+API_KEY_POOL_CONFIG = {
+    "max_failure_count": 3,        # 最大失败次数，超过后暂时禁用密钥
+    "disable_duration": 300,       # 密钥禁用时长（秒），5分钟
+    "success_reset_threshold": 2,  # 成功次数阈值，重置失败计数
+    "enable_key_rotation": True,   # 启用密钥轮换
+    "log_key_usage": True          # 是否记录密钥使用情况（不记录具体密钥内容）
+}
+
+# 国家识别缓存配置
+COUNTRY_CACHE = {}  # 简单内存缓存
+COUNTRY_CACHE_MAX_SIZE = 1000
+COUNTRY_CACHE_TTL = 3600  # 1小时过期
+
 ENABLE_WEB_SEARCH = True  # 是否启用web search功能
 REQUEST_DELAY = 2.0  # API请求间隔（秒），避免429错误
 
 # 配置日志
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# ================= API密钥池管理器 =================
+class APIKeyPoolManager:
+    """
+    API密钥池管理器 - 提供密钥的动态管理、自动轮换和状态监控功能
+    """
+    
+    def __init__(self, api_keys: list, config: dict):
+        """
+        初始化API密钥池管理器
+        
+        Args:
+            api_keys: API密钥列表
+            config: 配置字典
+        """
+        self.api_keys = api_keys
+        self.config = config
+        self.current_key_index = 0
+        self.key_states = {}
+        
+        # 初始化每个密钥的状态
+        for i, key in enumerate(api_keys):
+            key_id = f"key_{i+1}"  # 使用key_1, key_2等作为密钥标识符
+            self.key_states[key_id] = {
+                "key": key,
+                "failure_count": 0,
+                "success_count": 0,
+                "is_disabled": False,
+                "disabled_until": None,
+                "last_used": None,
+                "total_requests": 0,
+                "total_successes": 0
+            }
+    
+    def get_available_key(self) -> Optional[str]:
+        """
+        获取下一个可用的API密钥
+        
+        Returns:
+            可用的API密钥，如果所有密钥都不可用则返回None
+        """
+        if not self.config.get("enable_key_rotation", True):
+            return self.api_keys[0] if self.api_keys else None
+            
+        attempts = 0
+        max_attempts = len(self.api_keys)
+        
+        while attempts < max_attempts:
+            key_id = f"key_{self.current_key_index + 1}"
+            state = self.key_states[key_id]
+            
+            # 检查密钥是否被禁用
+            if self._is_key_disabled(state):
+                # 尝试下一个密钥
+                self.current_key_index = (self.current_key_index + 1) % len(self.api_keys)
+                attempts += 1
+                continue
+                
+            # 密钥可用
+            return state["key"]
+        
+        # 所有密钥都不可用
+        logger.error("所有API密钥都不可用")
+        return None
+    
+    def _is_key_disabled(self, key_state: dict) -> bool:
+        """
+        检查密钥是否被禁用
+        
+        Args:
+            key_state: 密钥状态字典
+            
+        Returns:
+            布尔值，表示密钥是否被禁用
+        """
+        if not key_state["is_disabled"]:
+            return False
+            
+        # 检查禁用时间是否已过
+        if key_state["disabled_until"] and time.time() > key_state["disabled_until"]:
+            # 重新启用密钥
+            key_state["is_disabled"] = False
+            key_state["disabled_until"] = None
+            logger.info(f"密钥重新启用")
+            return False
+            
+        return True
+    
+    def report_success(self, key: str):
+        """
+        报告API请求成功
+        
+        Args:
+            key: 使用的API密钥
+        """
+        key_id = self._get_key_id(key)
+        if key_id and key_id in self.key_states:
+            state = self.key_states[key_id]
+            state["success_count"] += 1
+            state["total_successes"] += 1
+            state["last_used"] = time.time()
+            
+            # 如果有失败记录，重置失败计数
+            if state["failure_count"] > 0:
+                state["failure_count"] = max(0, state["failure_count"] - 1)
+            
+            # 记录密钥使用情况
+            if self.config.get("log_key_usage", True):
+                logger.debug(f"密钥 {key_id} 请求成功，累计成功: {state['total_successes']}")
+    
+    def report_failure(self, key: str, error_type: str = "unknown"):
+        """
+        报告API请求失败
+        
+        Args:
+            key: 使用的API密钥
+            error_type: 错误类型
+        """
+        key_id = self._get_key_id(key)
+        if key_id and key_id in self.key_states:
+            state = self.key_states[key_id]
+            state["failure_count"] += 1
+            state["total_requests"] += 1
+            state["last_used"] = time.time()
+            
+            # 检查是否需要禁用密钥
+            max_failures = self.config.get("max_failure_count", 3)
+            if state["failure_count"] >= max_failures:
+                self._disable_key(key_id, error_type)
+            
+            # 记录密钥使用情况
+            if self.config.get("log_key_usage", True):
+                logger.warning(f"密钥 {key_id} 请求失败 ({error_type})，失败次数: {state['failure_count']}")
+    
+    def _disable_key(self, key_id: str, reason: str):
+        """
+        禁用密钥
+        
+        Args:
+            key_id: 密钥标识符
+            reason: 禁用原因
+        """
+        disable_duration = self.config.get("disable_duration", 300)
+        state = self.key_states[key_id]
+        
+        state["is_disabled"] = True
+        state["disabled_until"] = time.time() + disable_duration
+        
+        logger.warning(f"密钥 {key_id} 因失败次数过多被临时禁用，原因: {reason}，禁用时长: {disable_duration}秒")
+    
+    def _get_key_id(self, key: str) -> Optional[str]:
+        """
+        根据密钥获取密钥标识符
+        
+        Args:
+            key: API密钥
+            
+        Returns:
+            密钥标识符，如果找不到返回None
+        """
+        for key_id, state in self.key_states.items():
+            if state["key"] == key:
+                return key_id
+        return None
+    
+    def get_key_statistics(self) -> dict:
+        """
+        获取所有密钥的统计信息
+        
+        Returns:
+            包含统计信息的字典
+        """
+        stats = {}
+        for key_id, state in self.key_states.items():
+            stats[key_id] = {
+                "is_disabled": state["is_disabled"],
+                "failure_count": state["failure_count"],
+                "success_count": state["success_count"],
+                "total_requests": state["total_requests"],
+                "total_successes": state["total_successes"],
+                "success_rate": state["total_successes"] / max(1, state["total_requests"]),
+                "last_used": state["last_used"]
+            }
+        return stats
+    
+    def rotate_key(self):
+        """
+        轮换到下一个密钥
+        """
+        self.current_key_index = (self.current_key_index + 1) % len(self.api_keys)
+        logger.debug(f"密钥轮换到索引: {self.current_key_index}")
+
+# 创建全局API密钥池管理器实例
+api_key_pool = APIKeyPoolManager(API_KEYS_POOL, API_KEY_POOL_CONFIG)
 
 # ================= 主程序配置 =================
 # 全局配置
@@ -104,8 +322,8 @@ def parse_record(article):
     except:
         data['发表年份'] = "N/A"
 
-    # 2. 数据收集年份 (通过AI提取)
-    data['数据收集年份'] = ai_extracted.get('数据收集年份', "需人工确认")
+    # 2. 数据收集年份 (通过AI提取) - 稍后从AI提取结果获取，先设为默认值
+    data['数据收集年份'] = "需AI提取"
 
     # 3. 国家 (尝试从作者机构提取，通常取第一作者)
     data['国家'] = extract_country_from_affiliation(article_data)
@@ -139,7 +357,9 @@ def parse_record(article):
     logger.info("开始使用AI提取研究信息...")
     
     # 直接使用AI提取所有信息
+    print("  📤 正在将摘要/原文html发给AI询问中...")
     ai_extracted = extract_info_with_ai(abstract_text)
+    print("  📥 AI数据已返回")
     logger.info(f"AI提取结果：{ai_extracted}")
     
     # 更新数据字段
@@ -148,7 +368,8 @@ def parse_record(article):
     data['推荐补充剂量/用法'] = ai_extracted.get('推荐补充剂量/用法', "需人工确认")
     data['作用机理'] = ai_extracted.get('作用机理', "需人工确认")
     data['摘要主要内容'] = ai_extracted.get('摘要主要内容', "需人工确认")
-    data['结论摘要'] = abstract_text # 保留原文摘要供参考
+    data['结论摘要'] = ai_extracted.get('结论摘要', "需人工确认")  # 从AI提取结果中获取中文结论摘要
+    data['数据收集年份'] = ai_extracted.get('数据收集年份', "需人工确认")  # 从AI提取结果中获取数据收集年份
     
     # 9. 证据等级 (基于研究类型预判)
     if "Meta-Analysis" in data['研究类型']:
@@ -192,7 +413,7 @@ def parse_record(article):
 
 def extract_country_from_affiliation(article_data: Dict) -> str:
     """
-    从作者机构信息中提取国家名称
+    从作者机构信息中提取国家名称 - 基于GPT AI的简化实现
     
     Args:
         article_data: 从PubMed获取的文章数据
@@ -200,76 +421,10 @@ def extract_country_from_affiliation(article_data: Dict) -> str:
     Returns:
         国家名称字符串
     """
-    # 预定义的国家列表（包含常见国家名称和变体）
-    country_mappings = {
-        # 北美洲
-        "United States": "United States", "USA": "United States", "US": "United States", "America": "United States", "American": "United States",
-        "Canada": "Canada", "Canadian": "Canada", 
-        "Mexico": "Mexico", "Mexican": "Mexico",
-        
-        # 欧洲
-        "United Kingdom": "United Kingdom", "UK": "United Kingdom", "Britain": "United Kingdom", "British": "United Kingdom", "England": "United Kingdom", "English": "United Kingdom", "Scotland": "United Kingdom", "Scottish": "United Kingdom", "Wales": "United Kingdom", "Welsh": "United Kingdom",
-        "Germany": "Germany", "German": "Germany", "Deutschland": "Germany",
-        "France": "France", "French": "France", 
-        "Italy": "Italy", "Italian": "Italy",
-        "Spain": "Spain", "Spanish": "Spain",
-        "Netherlands": "Netherlands", "Dutch": "Netherlands",
-        "Sweden": "Sweden", "Swedish": "Sweden",
-        "Norway": "Norway", "Norwegian": "Norway",
-        "Denmark": "Denmark", "Danish": "Denmark",
-        "Finland": "Finland", "Finnish": "Finland",
-        "Switzerland": "Switzerland", "Swiss": "Switzerland",
-        "Austria": "Austria", "Austrian": "Austria",
-        "Belgium": "Belgium", "Belgian": "Belgium",
-        "Poland": "Poland", "Polish": "Poland",
-        "Czech": "Czech Republic", "Czechia": "Czech Republic",
-        "Portugal": "Portugal", "Portuguese": "Portugal",
-        "Greece": "Greece", "Greek": "Greece",
-        "Russia": "Russia", "Russian": "Russia",
-        
-        # 亚洲
-        "China": "China", "Chinese": "China", "Beijing": "China", "Shanghai": "China", "Guangzhou": "China", "Shenzhen": "China",
-        "Japan": "Japan", "Japanese": "Japan", "Tokyo": "Japan", "Osaka": "Japan",
-        "Korea": "South Korea", "Korean": "South Korea", "Seoul": "South Korea",
-        "South Korea": "South Korea", 
-        "India": "India", "Indian": "India", "Mumbai": "India", "Delhi": "India",
-        "Singapore": "Singapore", "Singaporean": "Singapore",
-        "Thailand": "Thailand", "Thai": "Thailand",
-        "Malaysia": "Malaysia", "Malaysian": "Malaysia",
-        "Indonesia": "Indonesia", "Indonesian": "Indonesia",
-        "Philippines": "Philippines", "Philippine": "Philippines",
-        "Vietnam": "Vietnam", "Vietnamese": "Vietnam",
-        "Taiwan": "Taiwan", "Taiwanese": "Taiwan",
-        "Hong Kong": "Hong Kong",
-        
-        # 大洋洲
-        "Australia": "Australia", "Australian": "Australia", "Sydney": "Australia", "Melbourne": "Australia",
-        "New Zealand": "New Zealand", "NZ": "New Zealand", "Auckland": "New Zealand",
-        
-        # 非洲
-        "South Africa": "South Africa", "Egypt": "Egypt", "Egyptian": "Egypt",
-        "Nigeria": "Nigeria", "Ghana": "Ghana", "Kenya": "Kenya",
-        
-        # 南美洲
-        "Brazil": "Brazil", "Brazilian": "Brazil", "Argentina": "Argentina", "Chile": "Chile", "Colombia": "Colombia"
-    }
-    
-    # 需要过滤的非国家词汇
-    invalid_country_indicators = [
-        # 城市和地区
-        "street", "st.", "avenue", "ave.", "road", "rd.", "boulevard", "blvd.",
-        "hospital", "university", "college", "institute", "school", "department",
-        "center", "centre", "laboratory", "lab", "building", "floor", "room",
-        "zip", "postal", "postcode", "code", "district", "province", "state",
-        # 邮政编码格式
-        r'\d{5}(-\d{4})?', r'[A-Z]\d[A-Z] \d[A-Z]\d', r'\d{4}-\d{3}', r'\d{3}\s?\d{3}',
-        # 特殊格式
-        "H9X", "M5V", "V1M", "SW3P", "WC1N", "1A1", "2B2"
-    ]
-    
     try:
         # 尝试从第一作者提取机构信息
         if 'AuthorList' not in article_data or not article_data['AuthorList']:
+            logger.warning("没有找到作者信息，返回需人工确认")
             return "需人工确认"
             
         first_author = article_data['AuthorList'][0]
@@ -282,131 +437,241 @@ def extract_country_from_affiliation(article_data: Dict) -> str:
             affiliation = first_author['Affiliation']
         
         if not affiliation:
+            logger.warning("没有找到机构信息，返回需人工确认")
             return "需人工确认"
         
-        logger.info(f"提取到的机构信息: {affiliation[:200]}...")
+        # 清理机构信息用于缓存键
+        clean_affiliation = affiliation.replace('\n', ' ').replace('\r', ' ').strip()
         
-        # 清理机构信息
-        affiliation = affiliation.replace('\n', ' ').replace('\r', ' ')
-        affiliation_parts = [part.strip() for part in affiliation.split(',')]
+        # 检查缓存
+        cache_key = f"{hash(clean_affiliation)}_{len(clean_affiliation)}"
+        if cache_key in COUNTRY_CACHE:
+            cached_result, cache_time = COUNTRY_CACHE[cache_key]
+            if time.time() - cache_time < COUNTRY_CACHE_TTL:
+                logger.debug(f"从缓存获取国家信息: {cached_result}")
+                return cached_result
         
-        # 提取国家关键词
-        country_candidates = []
+        # 使用AI进行国家识别
+        ai_result = _extract_country_with_ai(clean_affiliation)
         
-        # 检查每个部分是否包含国家信息
-        logger.info(f"机构信息分割后: {affiliation_parts}")
+        if ai_result and ai_result != "需人工确认":
+            # 更新缓存
+            _update_country_cache(cache_key, ai_result)
+            return ai_result
         
-        for part in affiliation_parts:
-            part_upper = part.upper().strip()
-            part_lower = part.lower().strip()
-            
-            logger.info(f"检查部分: '{part}' -> 上: '{part_upper}' -> 下: '{part_lower}'")
-            
-            # 先检查是否匹配已知国家
-            matched_country = None
-            for country_key, country_name in country_mappings.items():
-                if (country_key.upper() in part_upper or 
-                    country_key.lower() in part_lower):
-                    logger.info(f"匹配到国家关键词: '{country_key}' -> '{country_name}'")
-                    matched_country = country_name
-                    break
-            
-            if matched_country:
-                country_candidates.append(matched_country)
-                logger.info(f"添加到候选国家列表: {matched_country}")
-                continue
-                
-            # 如果没有匹配到已知国家，再检查是否包含无效指标
-            is_invalid = False
-            for invalid in invalid_country_indicators:
-                if isinstance(invalid, str):
-                    if invalid.lower() in part_lower:
-                        is_invalid = True
-                        break
-                else:  # 正则表达式
-                    if invalid.search(part):
-                        is_invalid = True
-                        break
-            
-            if is_invalid:
-                continue
-        
-        # 如果找到国家候选，返回最可能的
-        if country_candidates:
-            # 优先返回United States或China（最常见），否则返回第一个
-            for priority_country in ["United States", "China", "United Kingdom", "Germany", "Japan", "Australia"]:
-                if priority_country in country_candidates:
-                    return priority_country
-            return country_candidates[0]
-        
-        # 如果没有找到预定义国家，尝试智能提取
-        # 提取最后一个逗号分隔的部分（通常是国家）
-        potential_country = affiliation_parts[-1].strip()
-        
-        # 验证提取的国家是否有效
-        if is_likely_country(potential_country):
-            return potential_country
-        
-        return "需人工确认"
+        # 回退到简单的关键词匹配
+        logger.info("AI识别失败，使用回退机制")
+        return _fallback_country_extraction(clean_affiliation)
         
     except Exception as e:
         logger.error(f"提取国家信息时出错: {e}")
         return "需人工确认"
 
-def is_likely_country(text: str) -> bool:
+def _extract_country_with_ai(affiliation: str) -> str:
     """
-    验证提取的文本是否可能是国家名称
+    使用GPT AI从机构信息中提取国家名称
     
     Args:
-        text: 待验证的文本
+        affiliation: 机构信息字符串
         
     Returns:
-        布尔值，表示是否是可能的国家名称
+        国家名称字符串
     """
-    if not text or len(text.strip()) < 2:
-        return False
+    prompt = f"""请从以下作者机构信息中提取国家名称。请只返回国家名称，如果无法确定则返回"需人工确认"。
+
+机构信息：
+{affiliation}
+
+要求：
+1. 只返回国家名称，如"United States"、"China"、"Germany"等
+2. 如果信息不足或无法确定，返回"需人工确认"
+3. 不要包含其他文字或解释
+4. 统一使用标准国家名称（如"United States"而非"USA"）
+"""
+
+    try:
+        # 使用简化的AI调用函数
+        result = _call_ai_api(prompt, "country_extraction")
+        if result:
+            result = result.strip()
+            # 验证返回结果
+            if result and result != "需人工确认":
+                logger.info(f"AI识别国家成功: {result}")
+                return result
+        return "需人工确认"
+    except Exception as e:
+        logger.error(f"AI国家识别失败: {e}")
+        return "需人工确认"
+
+def _fallback_country_extraction(affiliation: str) -> str:
+    """
+    回退机制：简单的关键词匹配提取国家
     
-    text = text.strip()
+    Args:
+        affiliation: 机构信息字符串
+        
+    Returns:
+        国家名称字符串
+    """
+    # 简化的国家关键词映射
+    country_keywords = {
+        "United States": ["USA", "US", "America", "United States", "American"],
+        "China": ["China", "Chinese", "Beijing", "Shanghai", "Guangzhou"],
+        "United Kingdom": ["UK", "Britain", "England", "Scotland", "Wales"],
+        "Germany": ["Germany", "German", "Deutschland"],
+        "Japan": ["Japan", "Japanese", "Tokyo", "Osaka"],
+        "Australia": ["Australia", "Australian", "Sydney", "Melbourne"],
+        "Canada": ["Canada", "Canadian"],
+        "France": ["France", "French"],
+        "Italy": ["Italy", "Italian"],
+        "Spain": ["Spain", "Spanish"],
+        "Netherlands": ["Netherlands", "Dutch"],
+        "South Korea": ["Korea", "Korean", "Seoul"],
+        "India": ["India", "Indian", "Mumbai", "Delhi"],
+        "Singapore": ["Singapore", "Singaporean"],
+        "Taiwan": ["Taiwan", "Taiwanese"],
+        "Hong Kong": ["Hong Kong"],
+        "Brazil": ["Brazil", "Brazilian"],
+        "Mexico": ["Mexico", "Mexican"]
+    }
     
-    # 长度限制（国家名称通常2-30个字符）
-    if len(text) < 2 or len(text) > 30:
-        return False
+    affiliation_upper = affiliation.upper()
     
-    # 不能包含数字（邮政编码）
-    if any(char.isdigit() for char in text):
-        return False
+    for country, keywords in country_keywords.items():
+        for keyword in keywords:
+            if keyword.upper() in affiliation_upper:
+                logger.info(f"回退机制识别国家: {country} (匹配关键词: {keyword})")
+                return country
     
-    # 不能包含常见的非国家词汇
-    invalid_patterns = [
-        r'\d+',  # 包含数字
-        r'^\d',  # 以数字开头
-        r'\d$',  # 以数字结尾
-        r'[A-Z]\d[A-Z]',  # 邮政编码格式
-        r'\d[A-Z]\d',  # 邮政编码格式
-        r'(street|st\.?|avenue|ave\.?|road|rd\.?)',  # 街道
-        r'(hospital|university|college|institute)',  # 机构
-        r'(zip|postal|postcode)',  # 邮政编码
-        r'(building|floor|room)',  # 建筑信息
-    ]
+    logger.info("回退机制也未能识别国家，返回需人工确认")
+    return "需人工确认"
+
+def _call_ai_api(prompt: str, context: str) -> str:
+    """
+    调用AI API的简化接口
     
-    import re
-    for pattern in invalid_patterns:
-        if re.search(pattern, text, re.IGNORECASE):
-            return False
+    Args:
+        prompt: 提示词
+        context: 上下文标识
+        
+    Returns:
+        AI返回的文本
+    """
+    try:
+        # 定义模型配置
+        model_configs = [
+            ("gpt-3.5-turbo", API_ENDPOINTS[0]),  # GPTGod + gpt-3.5
+            ("gpt-4", API_ENDPOINTS[0]),  # GPTGod + gpt-4
+            ("deepseek-chat", API_ENDPOINTS[2])  # DeepSeek + deepseek-chat
+        ]
+        
+        # 使用现有的extract_info_with_ai逻辑，但只获取简单文本结果
+        max_retries_per_config = 2
+        max_total_retries = 6
+        
+        total_attempts = 0
+        for model, endpoint in model_configs:
+            if total_attempts >= max_total_retries:
+                break
+                
+            for retry in range(max_retries_per_config):
+                total_attempts += 1
+                if total_attempts >= max_total_retries:
+                    break
+                    
+                # 获取可用密钥
+                api_key = api_key_pool.get_available_key()
+                if not api_key:
+                    logger.error("没有可用的API密钥")
+                    return ""
+                
+                try:
+                    headers = {
+                        'Content-Type': 'application/json',
+                        'Authorization': f'Bearer {api_key}'
+                    }
+                    
+                    payload = {
+                        'model': model,
+                        'messages': [
+                            {
+                                'role': 'user',
+                                'content': prompt
+                            }
+                        ],
+                        'max_tokens': 100,
+                        'temperature': 0.1
+                    }
+                    
+                    response = requests.post(endpoint, headers=headers, json=payload, timeout=30)
+                    
+                    if response.status_code == 200:
+                        data = response.json()
+                        if 'choices' in data and len(data['choices']) > 0:
+                            content = data['choices'][0]['message']['content'].strip()
+                            api_key_pool.report_success(api_key)
+                            logger.debug(f"AI API调用成功 ({context})")
+                            return content
+                        else:
+                            api_key_pool.report_failure(api_key, "invalid_response")
+                    elif response.status_code == 429:
+                        # 限流错误，使用指数退避
+                        wait_time = (2 ** retry) + random.uniform(0, 1)
+                        logger.warning(f"API限流，等待 {wait_time:.1f} 秒")
+                        time.sleep(wait_time)
+                        api_key_pool.report_failure(api_key, "rate_limit")
+                        continue
+                    elif response.status_code in [401, 403]:
+                        # 认证错误，切换密钥
+                        logger.warning(f"API密钥认证失败，尝试下一个密钥")
+                        api_key_pool.report_failure(api_key, "auth_error")
+                        break
+                    else:
+                        logger.error(f"API调用失败: {response.status_code} - {response.text}")
+                        api_key_pool.report_failure(api_key, f"http_{response.status_code}")
+                        
+                except requests.exceptions.Timeout:
+                    logger.error(f"API调用超时")
+                    api_key_pool.report_failure(api_key, "timeout")
+                    continue
+                except requests.exceptions.RequestException as e:
+                    logger.error(f"API请求异常: {e}")
+                    api_key_pool.report_failure(api_key, "request_error")
+                    continue
+                except Exception as e:
+                    logger.error(f"处理API响应时出错: {e}")
+                    api_key_pool.report_failure(api_key, "processing_error")
+                    continue
+        
+        logger.error("所有AI API调用尝试均失败")
+        return ""
+        
+    except Exception as e:
+        logger.error(f"调用AI API时出错: {e}")
+        return ""
+
+def _update_country_cache(key: str, country: str):
+    """
+    更新国家识别缓存
     
-    # 检查是否匹配常见的国家名称格式
-    country_patterns = [
-        r'^[A-Z][a-z]+$',  # 首字母大写，如"Germany"
-        r'^[A-Z][a-z]+ [A-Z][a-z]+$',  # 两个词，如"New Zealand"
-        r'^[A-Z]+$',  # 全大写，如"USA"
-        r'^[A-Z][a-z]+$',  # 标准国家名格式
-    ]
-    
-    for pattern in country_patterns:
-        if re.match(pattern, text):
-            return True
-    
-    return False
+    Args:
+        key: 缓存键
+        country: 国家名称
+    """
+    try:
+        # 检查缓存大小限制
+        if len(COUNTRY_CACHE) >= COUNTRY_CACHE_MAX_SIZE:
+            # 删除最旧的条目（简单实现：删除第一个）
+            oldest_key = next(iter(COUNTRY_CACHE))
+            del COUNTRY_CACHE[oldest_key]
+            logger.debug("缓存已满，删除最旧条目")
+        
+        COUNTRY_CACHE[key] = (country, time.time())
+        logger.debug(f"更新国家缓存: {key[:20]}... -> {country}")
+    except Exception as e:
+        logger.error(f"更新缓存时出错: {e}")
+
+
 
 def extract_info_with_regex(abstract_text: str) -> Dict[str, str]:
     """
@@ -527,13 +792,14 @@ def extract_info_with_ai(abstract_text: str) -> Dict[str, str]:
             "推荐补充剂量/用法": "需人工确认",
             "作用机理": "需人工确认",
             "摘要主要内容": "需人工确认",
+            "结论摘要": "需人工确认",
             "国家": "需人工确认",
             "数据收集年份": "需人工确认"
         }
     
     # 构建全中文提示词，要求AI从摘要中提取特定信息
     prompt = f"""
-请分析以下英文学术文献摘要，并提取以下七个方面的中文信息：
+请分析以下英文学术文献摘要，并提取以下八个方面的中文信息：
 
 **摘要原文：**
 {abstract_text}
@@ -560,7 +826,12 @@ def extract_info_with_ai(abstract_text: str) -> Dict[str, str]:
    - 例如：研究发现每日补充30毫升MCT油可以显著减少超重成年人的体脂含量
    - 答案必须是中文，简洁明了
 
-6. **国家**：研究进行所在的国家
+6. **结论摘要**：研究的核心结论和研究意义，必须用中文表达
+   - 例如：本研究表明MCT油补充剂能够有效改善肥胖人群的体重和体脂分布，为临床营养干预提供了新的证据支持
+   - **强制性要求：答案必须是中文，不能使用英文** 
+   - 如果摘要中没有明确结论，请基于研究结果总结中文结论
+
+7. **国家**：研究进行所在的国家
    - 例如：美国、中国、英国、德国、日本、澳大利亚等
    - 只返回标准国家名称，如"USA"对应"美国"，"China"对应"中国"
    - 绝不能包含城市名（如Beijing、Shanghai、New York、London等）
@@ -569,7 +840,7 @@ def extract_info_with_ai(abstract_text: str) -> Dict[str, str]:
    - 绝不能包含街道地址（如Street、Road、Avenue等）
    - 如果无法确定准确的国家，标注"需人工确认"
 
-7. **数据收集年份**：研究实际数据收集的时间期间
+8. **数据收集年份**：研究实际数据收集的时间期间
    - 例如：2018年1月至12月，2019年6月-2020年5月，2020年等
    - 只返回具体年份或年份范围，不要包含发表年份
    - 如果摘要中没有明确提到数据收集时间，标注"未明确说明"
@@ -582,12 +853,14 @@ def extract_info_with_ai(abstract_text: str) -> Dict[str, str]:
   "推荐补充剂量/用法": "提取的中文内容",
   "作用机理": "提取的中文内容",
   "摘要主要内容": "提取的中文内容",
+  "结论摘要": "提取的中文内容",
   "国家": "提取的中文内容",
   "数据收集年份": "提取的中文内容"
 }}
 ```
 
 **重要要求：**
+- **结论摘要字段强制性要求：必须使用中文回答，不能包含任何英文内容**
 - 所有答案必须是纯中文，不能包含英文单词
 - **国家字段特别要求**：绝对不能返回城市、邮政编码、机构名称或地址信息
 - **数据收集年份字段特别要求**：必须区分发表年份和数据收集年份，发表年份不是数据收集年份
@@ -604,77 +877,122 @@ def extract_info_with_ai(abstract_text: str) -> Dict[str, str]:
         ("deepseek-chat", API_ENDPOINTS[2])  # DeepSeek + deepseek-chat
     ]
     
+    print("  🤖 AI模型开始分析摘要内容...")
+    max_retries_per_config = 3  # 每个模型配置的最大重试次数
+    
     for model_name, api_base_url in model_configs:
-        headers = {
-            "Authorization": f"Bearer {API_KEY}",
-            "Content-Type": "application/json"
-        }
-        
-        payload = {
-            "model": model_name,
-            "messages": [
-                {
-                    "role": "user", 
-                    "content": prompt
-                }
-            ],
-            "max_tokens": 1000,
-            "temperature": 0.1
-        }
-        
-        try:
-            logger.info(f"尝试使用模型 {model_name} 在端点 {api_base_url}，摘要长度：{len(abstract_text)}字符")
-            
-            # 添加请求间隔，避免429错误
-            time.sleep(REQUEST_DELAY)
-            
-            # 发送API请求
-            response = requests.post(api_base_url, headers=headers, json=payload, timeout=30)
-            
-            # 处理API响应
-            if response.status_code == 200:
-                result = response.json()
-                ai_content = result['choices'][0]['message']['content']
-                logger.info(f"AI API调用成功，模型：{model_name}")
+        for attempt in range(max_retries_per_config):
+            # 从密钥池获取可用密钥
+            current_api_key = api_key_pool.get_available_key()
+            if not current_api_key:
+                logger.error("没有可用的API密钥，尝试下一个模型")
+                break
                 
-                # 提取JSON部分
-                try:
-                    # 尝试从AI响应中提取JSON
-                    json_start = ai_content.find('{')
-                    json_end = ai_content.rfind('}') + 1
-                    if json_start != -1 and json_end != 0:
-                        json_str = ai_content[json_start:json_end]
-                        extracted_data = json.loads(json_str)
-                        
-                        # 验证提取的数据
-                        validated_data = validate_extracted_data(extracted_data)
-                        logger.info(f"成功提取信息：{validated_data}")
-                        return validated_data
-                    else:
-                        raise ValueError("未找到有效的JSON格式")
-                        
-                except (json.JSONDecodeError, ValueError) as e:
-                    logger.error(f"JSON解析失败：{e}，AI响应：{ai_content}")
-                    continue  # 尝试下一个模型
+            headers = {
+                "Authorization": f"Bearer {current_api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            payload = {
+                "model": model_name,
+                "messages": [
+                    {
+                        "role": "user", 
+                        "content": prompt
+                    }
+                ],
+                "max_tokens": 1000,
+                "temperature": 0.1
+            }
+            
+            try:
+                # 记录尝试信息（使用安全的日志记录）
+                if API_KEY_POOL_CONFIG.get("log_key_usage", True):
+                    key_id = api_key_pool._get_key_id(current_api_key)
+                    logger.info(f"尝试使用模型 {model_name} 在端点 {api_base_url}，尝试 {attempt + 1}/{max_retries_per_config}，密钥 {key_id}")
+                else:
+                    logger.info(f"尝试使用模型 {model_name} 在端点 {api_base_url}，尝试 {attempt + 1}/{max_retries_per_config}")
+                
+                # 添加请求间隔，避免429错误
+                time.sleep(REQUEST_DELAY)
+                
+                # 发送API请求
+                response = requests.post(api_base_url, headers=headers, json=payload, timeout=30)
+                
+                # 处理API响应
+                if response.status_code == 200:
+                    result = response.json()
+                    ai_content = result['choices'][0]['message']['content']
                     
-            elif response.status_code == 429:
-                logger.warning(f"API请求频率过高，模型：{model_name}")
-                time.sleep(REQUEST_DELAY * 5)  # 等待更长时间
-                continue  # 尝试下一个模型
+                    # 记录成功信息
+                    api_key_pool.report_success(current_api_key)
+                    
+                    if API_KEY_POOL_CONFIG.get("log_key_usage", True):
+                        key_id = api_key_pool._get_key_id(current_api_key)
+                        logger.info(f"AI API调用成功，模型：{model_name}，密钥：{key_id}")
+                    else:
+                        logger.info(f"AI API调用成功，模型：{model_name}")
+                    
+                    # 提取JSON部分
+                    try:
+                        # 尝试从AI响应中提取JSON
+                        json_start = ai_content.find('{')
+                        json_end = ai_content.rfind('}') + 1
+                        if json_start != -1 and json_end != 0:
+                            json_str = ai_content[json_start:json_end]
+                            extracted_data = json.loads(json_str)
+                            
+                            # 验证提取的数据
+                            validated_data = validate_extracted_data(extracted_data)
+                            logger.info(f"成功提取信息")
+                            return validated_data
+                        else:
+                            raise ValueError("未找到有效的JSON格式")
+                            
+                    except (json.JSONDecodeError, ValueError) as e:
+                        # JSON解析失败也报告为失败，但不切换密钥
+                        api_key_pool.report_failure(current_api_key, "json_parse_error")
+                        logger.error(f"JSON解析失败：{e}")
+                        continue  # 重试当前模型
+                        
+                elif response.status_code == 429:
+                    # 请求频率过高
+                    api_key_pool.report_failure(current_api_key, "rate_limit")
+                    wait_time = REQUEST_DELAY * (2 ** attempt)  # 指数退避
+                    logger.warning(f"API请求频率过高，模型：{model_name}，等待 {wait_time} 秒后重试")
+                    time.sleep(wait_time)
+                    continue  # 重试当前模型
+                    
+                else:
+                    # 其他HTTP错误
+                    api_key_pool.report_failure(current_api_key, f"http_{response.status_code}")
+                    logger.error(f"API请求失败，模型：{model_name}，状态码：{response.status_code}")
+                    
+                    # 如果是认证错误（401/403），直接切换密钥
+                    if response.status_code in [401, 403]:
+                        logger.warning(f"认证失败，切换到下一个密钥")
+                        api_key_pool.rotate_key()
+                        continue  # 尝试下一个密钥
+                    else:
+                        continue  # 重试当前模型
+                    
+            except requests.exceptions.RequestException as e:
+                # 网络请求错误
+                api_key_pool.report_failure(current_api_key, "network_error")
+                logger.error(f"网络请求错误，模型：{model_name}，错误：{e}")
+                continue  # 重试当前模型
                 
-            else:
-                logger.error(f"API请求失败，模型：{model_name}，状态码：{response.status_code}")
-                continue  # 尝试下一个模型
-                
-        except requests.exceptions.RequestException as e:
-            logger.error(f"网络请求错误，模型：{model_name}，错误：{e}")
-            continue  # 尝试下一个模型
-        except Exception as e:
-            logger.error(f"AI信息提取过程发生错误，模型：{model_name}，错误：{e}")
-            continue  # 尝试下一个模型
+            except Exception as e:
+                # 其他异常
+                api_key_pool.report_failure(current_api_key, "unknown_error")
+                logger.error(f"AI信息提取过程发生错误，模型：{model_name}，错误：{e}")
+                continue  # 重试当前模型
+        
+        # 当前模型配置的所有重试都失败，尝试下一个模型
+        logger.warning(f"模型 {model_name} 在所有重试后仍然失败，尝试下一个模型")
     
     # 所有模型都失败
-    logger.warning("所有AI模型都调用失败，使用备用数据")
+    logger.warning("所有AI模型和密钥组合都调用失败，使用备用数据")
     return get_fallback_data()
 
 def validate_extracted_data(data: Dict[str, str]) -> Dict[str, str]:
@@ -682,7 +1000,7 @@ def validate_extracted_data(data: Dict[str, str]) -> Dict[str, str]:
     验证和清理提取的数据
     """
     validated = {}
-    for key in ["研究对象", "样本量", "推荐补充剂量/用法", "作用机理", "摘要主要内容", "国家", "数据收集年份"]:
+    for key in ["研究对象", "样本量", "推荐补充剂量/用法", "作用机理", "摘要主要内容", "结论摘要", "国家", "数据收集年份"]:
         value = data.get(key, "N/A")
         # 清理和验证值
         if isinstance(value, str):
@@ -707,6 +1025,7 @@ def get_fallback_data() -> Dict[str, str]:
         "推荐补充剂量/用法": "需人工确认",
         "作用机理": "需人工确认",
         "摘要主要内容": "需人工确认",
+        "结论摘要": "需人工确认",
         "国家": "需人工确认",
         "数据收集年份": "需人工确认"
     }
@@ -1317,88 +1636,252 @@ def test_ai_extraction():
     print("测试完成")
     print("=" * 60)
 
-# ================= 主程序 =================
-def get_user_search_term():
-    """
-    获取用户输入的搜索词
-    """
-    global MAX_RESULTS, ENABLE_FULLTEXT_EXTRACTION
-    
-    print("\n" + "="*60)
-    print("PubMed文献搜索工具")
-    print("="*60)
-    
-    print("\n当前配置:")
-    print(f"默认搜索词: {SEARCH_TERM.strip()[:100]}...")
-    print(f"最大结果数: {MAX_RESULTS}")
-    print(f"全文提取功能: {'开启' if ENABLE_FULLTEXT_EXTRACTION else '关闭'}")
-    print(f"邮箱: {Entrez.email}")
-    
-    print("\n请选择操作:")
-    print("1. 使用默认搜索词开始搜索")
-    print("2. 输入新的搜索词")
-    print("3. 查看详细搜索词")
-    print("4. 设置最大结果数量")
-    print("5. 启用/禁用全文提取功能")
-    print("6. 退出")
-    
-    while True:
-        choice = input("\n请输入选择 (1-6): ").strip()
-        
-        if choice == "1":
-            return SEARCH_TERM
-        elif choice == "2":
-            print("\n请输入搜索词 (支持PubMed语法):")
-            print("示例: (diabetes OR diabetes mellitus) AND (metformin OR insulin)")
-            print("或者直接按Enter使用默认搜索词")
-            
-            custom_search = input("搜索词: ").strip()
-            if custom_search:
-                return custom_search
-            else:
-                return SEARCH_TERM
-        elif choice == "3":
-            print(f"\n当前默认搜索词:")
-            print("-"*40)
-            print(SEARCH_TERM)
-            print("-"*40)
-            continue
-        elif choice == "4":
-            print(f"\n当前最大结果数量: {MAX_RESULTS}")
-            print("建议值：20-500（数字越大搜索时间越长）")
-            
-            try:
-                new_max = input("请输入新的最大结果数量 (直接按Enter保持当前值): ").strip()
-                if new_max:
-                    new_max_num = int(new_max)
-                    if new_max_num > 0:
-                        MAX_RESULTS = new_max_num
-                        print(f"✅ 最大结果数量已更新为: {MAX_RESULTS}")
-                    else:
-                        print("❌ 请输入大于0的数字")
-                else:
-                    print(f"✅ 保持当前值: {MAX_RESULTS}")
-            except ValueError:
-                print("❌ 请输入有效的数字")
-            continue
-        elif choice == "5":
-            ENABLE_FULLTEXT_EXTRACTION = not ENABLE_FULLTEXT_EXTRACTION
-            status = "已启用" if ENABLE_FULLTEXT_EXTRACTION else "已禁用"
-            print(f"\n全文提取功能: {status}")
-            print(f"当前状态: {'开启' if ENABLE_FULLTEXT_EXTRACTION else '关闭'}")
-            continue
-        elif choice == "6":
-            print("程序退出")
-            exit(0)
-        else:
-            print("无效选择，请输入 1-6")
 
+# ================= API密钥池测试函数 =================
+def test_api_key_pool():
+    """
+    测试API密钥池管理器的各项功能
+    包括密钥轮换、失败检测、禁用逻辑和统计信息
+    """
+    print("\n" + "=" * 70)
+    print("API密钥池管理系统测试")
+    print("=" * 70)
+    
+    # 创建测试用的密钥池配置
+    test_keys = [
+        "sk-test123456789abcdef",  # 密钥1
+        "sk-test987654321fedcba",  # 密钥2
+        "sk-test111111111111111"   # 密钥3
+    ]
+    
+    test_config = {
+        "max_failure_count": 2,        # 设置较低阈值用于测试
+        "disable_duration": 10,        # 10秒禁用时间
+        "success_reset_threshold": 1,
+        "enable_key_rotation": True,
+        "log_key_usage": True
+    }
+    
+    # 创建测试密钥池管理器
+    test_pool = APIKeyPoolManager(test_keys, test_config)
+    print(f"✅ 创建测试密钥池，包含 {len(test_keys)} 个密钥")
+    
+    # 测试1: 基本密钥获取
+    print("\n--- 测试1: 基本密钥获取 ---")
+    key1 = test_pool.get_available_key()
+    print(f"获取第一个可用密钥: {key1}")
+    assert key1 == test_keys[0], "应该返回第一个密钥"
+    
+    # 测试2: 密钥轮换
+    print("\n--- 测试2: 密钥轮换 ---")
+    test_pool.rotate_key()
+    key2 = test_pool.get_available_key()
+    print(f"轮换后获取密钥: {key2}")
+    assert key2 == test_keys[1], "应该返回第二个密钥"
+    
+    # 测试3: 失败计数和禁用
+    print("\n--- 测试3: 失败计数和自动禁用 ---")
+    initial_stats = test_pool.get_key_statistics()
+    print(f"初始状态: {initial_stats}")
+    
+    # 报告失败直到触发禁用
+    for i in range(test_config["max_failure_count"]):
+        test_pool.report_failure(key1, "test_error")
+        stats = test_pool.get_key_statistics()
+        print(f"失败 {i+1} 次后: key_1 失败次数={stats['key_1']['failure_count']}")
+    
+    # 检查密钥是否被禁用
+    key_after_failures = test_pool.get_available_key()
+    print(f"禁用后获取的密钥: {key_after_failures}")
+    assert key_after_failures == test_keys[1], "应该跳过禁用的密钥1"
+    
+    # 测试4: 成功重置失败计数
+    print("\n--- 测试4: 成功重置失败计数 ---")
+    test_pool.report_success(key2)
+    stats = test_pool.get_key_statistics()
+    print(f"成功后统计: key_2 成功={stats['key_2']['success_count']}, 失败={stats['key_2']['failure_count']}")
+    
+    # 测试5: 禁用恢复
+    print("\n--- 测试5: 禁用恢复机制 ---")
+    key1_stats_before = test_pool.get_key_statistics()['key_1']
+    print(f"密钥1禁用状态: {key1_stats_before['is_disabled']}")
+    
+    if key1_stats_before['is_disabled']:
+        print(f"等待禁用期结束 (当前配置: {test_config['disable_duration']}秒)")
+        print("实际测试中，您可以设置更短的禁用时间进行快速测试")
+        
+        # 在实际测试中，我们可以模拟时间跳过
+        # 这里我们手动重置禁用状态来演示
+        test_pool.key_states['key_1']['is_disabled'] = False
+        test_pool.key_states['key_1']['disabled_until'] = None
+        print("手动重置禁用状态用于演示")
+    
+    # 测试6: 统计信息
+    print("\n--- 测试6: 统计信息获取 ---")
+    final_stats = test_pool.get_key_statistics()
+    print("最终统计信息:")
+    for key_id, stats in final_stats.items():
+        print(f"  {key_id}:")
+        print(f"    状态: {'禁用' if stats['is_disabled'] else '正常'}")
+        print(f"    总请求: {stats['total_requests']}")
+        print(f"    总成功: {stats['total_successes']}")
+        print(f"    成功率: {stats['success_rate']:.2%}")
+    
+    # 测试7: 所有密钥都不可用的情况
+    print("\n--- 测试7: 全部密钥禁用情况 ---")
+    # 禁用所有密钥
+    for i in range(len(test_keys)):
+        key_id = f"key_{i+1}"
+        test_pool.key_states[key_id]['is_disabled'] = True
+        test_pool.key_states[key_id]['disabled_until'] = time.time() + 60
+    
+    no_key = test_pool.get_available_key()
+    print(f"所有密钥禁用时获取结果: {no_key}")
+    assert no_key is None, "应该返回None表示没有可用密钥"
+    
+    print("\n" + "=" * 70)
+    print("API密钥池测试完成")
+    print("=" * 70)
+    
+    return test_pool
+
+
+def test_key_pool_scenarios():
+    """
+    测试密钥池在实际使用场景中的表现
+    """
+    print("\n" + "=" * 70)
+    print("密钥池实际使用场景测试")
+    print("=" * 70)
+    
+    # 使用实际的密钥池配置
+    print(f"使用实际密钥池，包含 {len(API_KEYS_POOL)} 个密钥")
+    
+    # 显示密钥池统计信息
+    stats = api_key_pool.get_key_statistics()
+    print("当前密钥池状态:")
+    for key_id, key_stats in stats.items():
+        status = "🔴 禁用" if key_stats['is_disabled'] else "🟢 正常"
+        last_used = "未使用" if not key_stats['last_used'] else time.strftime("%H:%M:%S", time.localtime(key_stats['last_used']))
+        
+        print(f"  {key_id}: {status}")
+        print(f"    总请求: {key_stats['total_requests']}, 成功: {key_stats['total_successes']}")
+        print(f"    成功率: {key_stats['success_rate']:.1%}")
+        print(f"    最后使用: {last_used}")
+    
+    # 测试密钥获取
+    print("\n--- 测试密钥获取 ---")
+    available_key = api_key_pool.get_available_key()
+    if available_key:
+        key_id = api_key_pool._get_key_id(available_key)
+        print(f"✅ 获取到可用密钥: {key_id}")
+        
+        # 模拟成功请求
+        api_key_pool.report_success(available_key)
+        print(f"✅ 报告密钥 {key_id} 请求成功")
+        
+        # 获取更新后的统计
+        updated_stats = api_key_pool.get_key_statistics()[key_id]
+        print(f"更新后成功率: {updated_stats['success_rate']:.1%}")
+    else:
+        print("❌ 没有可用的密钥")
+    
+    print("\n" + "=" * 70)
+    print("实际场景测试完成")
+    print("=" * 70)
+
+
+def test_country_processing():
+    """测试重构后的国家处理功能"""
+    print("\n" + "=" * 70)
+    print("重构后的国家处理功能测试")
+    print("=" * 70)
+    
+    # 模拟article_data
+    mock_articles = [
+        {
+            "AuthorList": [{
+                "AffiliationInfo": [{
+                    "Affiliation": "Department of Cardiology, Johns Hopkins University, Baltimore, MD 21287, United States"
+                }]
+            }]
+        },
+        {
+            "AuthorList": [{
+                "AffiliationInfo": [{
+                    "Affiliation": "School of Medicine, Peking University, Beijing, China"
+                }]
+            }]
+        },
+        {
+            "AuthorList": [{
+                "AffiliationInfo": [{
+                    "Affiliation": "Institute of Medical Sciences, University of Tokyo, Tokyo, Japan"
+                }]
+            }]
+        },
+        {
+            "AuthorList": [{
+                "AffiliationInfo": [{
+                    "Affiliation": "Random Hospital, Unknown City, Some Unknown Place"
+                }]
+            }]
+        },
+        {
+            "AuthorList": [{}]  # 没有机构信息
+        }
+    ]
+    
+    print("测试缓存机制...")
+    
+    # 测试缓存功能
+    result1 = extract_country_from_affiliation(mock_articles[0])
+    print(f"第一次调用结果: {result1}")
+    
+    result2 = extract_country_from_affiliation(mock_articles[0])  # 相同的机构信息
+    print(f"第二次调用结果 (缓存): {result2}")
+    
+    assert result1 == result2, "缓存应该返回相同结果"
+    print("✓ 缓存机制测试通过")
+    
+    print("\n测试各种国家识别场景...")
+    
+    expected_results = ["United States", "China", "Japan", "需人工确认", "需人工确认"]
+    
+    for i, (article, expected) in enumerate(zip(mock_articles, expected_results)):
+        result = extract_country_from_affiliation(article)
+        print(f"测试案例 {i+1}: {result}")
+        print(f"  预期结果: {expected}")
+        print(f"  状态: {'✓ 通过' if result == expected else '✗ 不匹配'}")
+    
+    print("\n测试缓存统计信息...")
+    print(f"当前缓存大小: {len(COUNTRY_CACHE)}")
+    print("✓ 国家处理功能测试完成!")
+    
+    # 清理缓存
+    COUNTRY_CACHE.clear()
+    print("缓存已清理")
+
+
+# 修改主程序以支持密钥池测试
 if __name__ == "__main__":
     import sys
     
-    # 检查命令行参数，如果是 "test" 则运行测试
-    if len(sys.argv) > 1 and sys.argv[1] == "test":
-        test_ai_extraction()
+    # 检查命令行参数
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "test":
+            test_ai_extraction()
+        elif sys.argv[1] == "test_key_pool":
+            test_api_key_pool()
+            test_key_pool_scenarios()
+        elif sys.argv[1] == "test_country":
+            test_country_processing()
+        else:
+            print("可用命令:")
+            print("  python pubmed.py           - 运行正常程序")
+            print("  python pubmed.py test      - 运行AI提取测试")
+            print("  python pubmed.py test_key_pool - 运行密钥池测试")
+            print("  python pubmed.py test_country - 运行国家处理测试")
     else:
         # 获取搜索词
         search_term = get_user_search_term()
@@ -1425,22 +1908,21 @@ if __name__ == "__main__":
             
             # 调整列顺序以符合文件要求
             columns_order = [
-                '发表年份', '数据收集年份', '国家', '研究类型', 
-                '研究对象', '样本量', '推荐补充剂量/用法', 
-                '作用机理', '摘要主要内容', '证据等级', '结论摘要', '标题', 'PMID',
+                '发表年份', '数据收集年份', '国家', '研究类型', '研究对象', '样本量', '推荐剂量', 
+                '补充剂量/用法', '作用机理', '摘要主要内容', '证据等级', '结论摘要', '标题', 'PMID',
                 # 全文相关字段
                 '免费全文状态', '免费全文链接数', '全文提取状态', '全文内容摘要'
             ]
             # 确保所有列都存在
             for col in columns_order:
                 if col not in df.columns:
-                    if col == '摘要主要内容':
+                    if col in ['发表年份', '数据收集年份', '国家', '研究类型', '研究对象', '样本量', '推荐剂量', '补充剂量/用法', '作用机理', '摘要主要内容', '证据等级', '结论摘要', '标题']:
                         df[col] = "需人工确认"
                     elif col in ['免费全文状态', '免费全文链接数', '全文提取状态']:
                         df[col] = False if col in ['免费全文状态', '全文提取状态'] else 0
                     elif col == '全文内容摘要':
                         df[col] = "未启用全文提取"
-                    else:
+                    elif col == 'PMID':
                         df[col] = ""
                     
             df = df[columns_order]
