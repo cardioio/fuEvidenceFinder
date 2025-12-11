@@ -1,0 +1,40 @@
+{
+  "is_free": true,
+  "confidence": "high",
+  "consensus": "2/3方法确认免费",
+  "source": "consensus_multi_method",
+  "pmid": "23430950",
+  "method_results": [
+    {
+      "is_free": true,
+      "pmid": "23430950",
+      "source": "europepmc_api",
+      "confidence": "high",
+      "pmcid": "PMC3565639",
+      "doi": "10.1007/8904_2012_131",
+      "title": "Successful weight loss in two adult patients diagnosed with late-onset long-chain Fatty Acid oxidation defect.",
+      "fullTextIdList": {
+        "fullTextId": [
+          "PMC3565639"
+        ]
+      },
+      "message": "EuropePMC检查完成"
+    },
+    {
+      "is_free": true,
+      "pmid": "23430950",
+      "source": "ncbi_api",
+      "confidence": "high",
+      "pmcid": "PMC3565639",
+      "message": "NCBI API检查完成"
+    },
+    {
+      "is_free": false,
+      "pmid": "23430950",
+      "source": "web_scraping",
+      "error": "无法获取页面内容",
+      "confidence": "low"
+    }
+  ],
+  "timestamp": "2025-12-11 22:43:51"
+}

@@ -1,0 +1,40 @@
+{
+  "is_free": true,
+  "confidence": "high",
+  "consensus": "2/3方法确认免费",
+  "source": "consensus_multi_method",
+  "pmid": "30049270",
+  "method_results": [
+    {
+      "is_free": true,
+      "pmid": "30049270",
+      "source": "europepmc_api",
+      "confidence": "high",
+      "pmcid": "PMC6062983",
+      "doi": "10.1186/s12889-018-5861-3",
+      "title": "Stigma and intersectionality: a systematic review of systematic reviews across HIV/AIDS, mental illness, and physical disability.",
+      "fullTextIdList": {
+        "fullTextId": [
+          "PMC6062983"
+        ]
+      },
+      "message": "EuropePMC检查完成"
+    },
+    {
+      "is_free": true,
+      "pmid": "30049270",
+      "source": "ncbi_api",
+      "confidence": "high",
+      "pmcid": "PMC6062983",
+      "message": "NCBI API检查完成"
+    },
+    {
+      "is_free": false,
+      "pmid": "30049270",
+      "source": "web_scraping",
+      "error": "无法获取页面内容",
+      "confidence": "low"
+    }
+  ],
+  "timestamp": "2025-12-11 22:43:47"
+}

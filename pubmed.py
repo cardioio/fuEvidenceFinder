@@ -9,6 +9,18 @@ import logging
 from typing import Dict, Optional
 from bs4 import BeautifulSoup
 
+# 导入增强版PubMed抓取器
+try:
+    from enhanced_pubmed_scraper import EnhancedPubMedScraper
+    ENHANCED_SCRAPER_AVAILABLE = True
+    logger = logging.getLogger(__name__)
+    logger.info("✅ 增强版PubMed抓取器已成功导入")
+except ImportError as e:
+    ENHANCED_SCRAPER_AVAILABLE = False
+    logger = logging.getLogger(__name__)
+    logger.warning(f"⚠️ 增强版PubMed抓取器导入失败: {e}")
+    logger.warning("将使用旧版本的免费状态检测逻辑")
+
 # ================= 配置区域 =================
 # 请替换为您自己的邮箱，这是PubMed API的要求，用于追踪高频访问
 Entrez.email = "varian69@gmail.com" 
@@ -383,7 +395,7 @@ def parse_record(article):
     data['标题'] = article_data.get('ArticleTitle', '')
     data['PMID'] = medline.get('PMID', '')
 
-    # 如果启用全文提取功能，获取PMID并进行全文分析
+    # 如果启用全文提取功能，获取PMID并进行全文分析（仅用于日志输出，不返回到前端）
     if ENABLE_FULLTEXT_EXTRACTION and data['PMID']:
         try:
             print(f"  🔍 正在检查PMID {data['PMID']} 的全文可用性...")
@@ -391,23 +403,19 @@ def parse_record(article):
             # 使用全文分析功能
             fulltext_analysis = analyze_pmid_with_full_text(data['PMID'])
             
-            # 将全文分析结果添加到数据中
-            data['免费全文状态'] = fulltext_analysis.get('is_free', False)
-            data['免费全文链接数'] = len(fulltext_analysis.get('links', []))
-            data['全文提取状态'] = fulltext_analysis.get('extraction_success', False)
-            data['全文内容摘要'] = fulltext_analysis.get('extracted_content', {}).get('abstract', '未提取')
-            
+            # 记录全文分析结果到日志（不返回到前端）
             if fulltext_analysis.get('is_free'):
-                print(f"  ✅ 发现免费全文: {data['免费全文链接数']} 个链接")
+                links_count = len(fulltext_analysis.get('links', []))
+                print(f"  ✅ 发现免费全文: {links_count} 个链接")
             else:
-                print(f"  ❌ 无免费全文")
+                if fulltext_analysis.get('extraction_success', False):
+                    print(f"  ✅ 原文网页全文获取成功")
+                else:
+                    print(f"  ❌ 付费文献，原文获取失败")
                 
         except Exception as e:
             logger.error(f"处理PMID {data['PMID']} 全文分析时出错: {e}")
-            data['免费全文状态'] = False
-            data['免费全文链接数'] = 0
-            data['全文提取状态'] = False
-            data['全文内容摘要'] = "分析失败"
+            print(f"  ❌ 付费文献，原文获取失败")
 
     return data
 
@@ -477,16 +485,17 @@ def _extract_country_with_ai(affiliation: str) -> str:
     Returns:
         国家名称字符串
     """
-    prompt = f"""请从以下作者机构信息中提取国家名称。请只返回国家名称，如果无法确定则返回"需人工确认"。
+    prompt = f"""请从以下作者机构信息中提取国家名称。请只返回中文国家名称，如果无法确定则返回"需人工确认"。
 
 机构信息：
 {affiliation}
 
 要求：
-1. 只返回国家名称，如"United States"、"China"、"Germany"等
+1. 只返回中文国家名称，如"美国"、"中国"、"德国"、"英国"、"日本"等
 2. 如果信息不足或无法确定，返回"需人工确认"
-3. 不要包含其他文字或解释
-4. 统一使用标准国家名称（如"United States"而非"USA"）
+3. 不要解释
+4.包含其他文字或 必须使用中文，不能使用英文
+5. 使用标准中文国家名称（如"美国"而非"USA"，"中国"而非"China"）
 """
 
     try:
@@ -513,26 +522,26 @@ def _fallback_country_extraction(affiliation: str) -> str:
     Returns:
         国家名称字符串
     """
-    # 简化的国家关键词映射
+    # 简化的中文国家关键词映射
     country_keywords = {
-        "United States": ["USA", "US", "America", "United States", "American"],
-        "China": ["China", "Chinese", "Beijing", "Shanghai", "Guangzhou"],
-        "United Kingdom": ["UK", "Britain", "England", "Scotland", "Wales"],
-        "Germany": ["Germany", "German", "Deutschland"],
-        "Japan": ["Japan", "Japanese", "Tokyo", "Osaka"],
-        "Australia": ["Australia", "Australian", "Sydney", "Melbourne"],
-        "Canada": ["Canada", "Canadian"],
-        "France": ["France", "French"],
-        "Italy": ["Italy", "Italian"],
-        "Spain": ["Spain", "Spanish"],
-        "Netherlands": ["Netherlands", "Dutch"],
-        "South Korea": ["Korea", "Korean", "Seoul"],
-        "India": ["India", "Indian", "Mumbai", "Delhi"],
-        "Singapore": ["Singapore", "Singaporean"],
-        "Taiwan": ["Taiwan", "Taiwanese"],
-        "Hong Kong": ["Hong Kong"],
-        "Brazil": ["Brazil", "Brazilian"],
-        "Mexico": ["Mexico", "Mexican"]
+        "美国": ["USA", "US", "America", "United States", "American", "USA.", "US.", "New York", "California", "Harvard", "Yale", "Stanford", "MIT"],
+        "中国": ["China", "Chinese", "Beijing", "Shanghai", "Guangzhou", "Tsinghua", "Peking", "Chinese Academy"],
+        "英国": ["UK", "Britain", "England", "Scotland", "Wales", "London", "Oxford", "Cambridge", "Imperial College"],
+        "德国": ["Germany", "German", "Deutschland", "Berlin", "Munich", "Heidelberg"],
+        "日本": ["Japan", "Japanese", "Tokyo", "Osaka", "Kyoto", "Tohoku", "Osaka University", "University of Tokyo"],
+        "澳大利亚": ["Australia", "Australian", "Sydney", "Melbourne", "Monash", "University of Sydney"],
+        "加拿大": ["Canada", "Canadian", "Toronto", "Montreal", "McGill", "University of Toronto"],
+        "法国": ["France", "French", "Paris", "Sorbonne"],
+        "意大利": ["Italy", "Italian", "Rome", "Milan", "University of Bologna"],
+        "西班牙": ["Spain", "Spanish", "Barcelona", "Madrid"],
+        "荷兰": ["Netherlands", "Dutch", "Amsterdam", "Rotterdam"],
+        "韩国": ["Korea", "Korean", "Seoul", "KAIST", "SNU"],
+        "印度": ["India", "Indian", "Mumbai", "Delhi", "IIT"],
+        "新加坡": ["Singapore", "Singaporean", "NUS", "NTU"],
+        "台湾": ["Taiwan", "Taiwanese", "Taipei"],
+        "香港": ["Hong Kong"],
+        "巴西": ["Brazil", "Brazilian"],
+        "墨西哥": ["Mexico", "Mexican"]
     }
     
     affiliation_upper = affiliation.upper()
@@ -1441,7 +1450,7 @@ def extract_full_text_content(pmid: str, link_url: str = None) -> Dict[str, any]
 def analyze_pmid_with_full_text(pmid: str) -> Dict[str, any]:
     """
     综合分析PMID：检查免费状态并提取全文内容
-    增强调试信息和错误处理
+    使用增强版PubMed抓取器进行免费状态检测
     
     Args:
         pmid: PubMed ID
@@ -1452,9 +1461,35 @@ def analyze_pmid_with_full_text(pmid: str) -> Dict[str, any]:
     print(f"\n🔍 开始分析PMID: {pmid}")
     print("=" * 60)
     
-    # 步骤1：检查全文可用性
+    # 步骤1：检查全文可用性 - 使用增强版scraper
     print("步骤1: 检查全文可用性...")
-    availability = check_full_text_availability(pmid)
+    
+    # 优先使用增强版scraper，如果不可用则回退到旧版本
+    if ENHANCED_SCRAPER_AVAILABLE:
+        print("🛠️ 使用增强版PubMed抓取器检测免费状态...")
+        try:
+            enhanced_scraper = EnhancedPubMedScraper()
+            enhanced_result = enhanced_scraper.check_fulltext_comprehensive(pmid)
+            
+            # 转换增强版scraper结果格式为系统兼容格式
+            availability = {
+                'is_free': enhanced_result.get('is_free', False),
+                'source': 'enhanced_scraper',
+                'confidence': enhanced_result.get('confidence', 'medium'),
+                'message': f"增强版检测: {enhanced_result.get('consensus', '检测完成')}",
+                'pmcid': enhanced_result.get('pmcid'),
+                'links': []  # 增强版scraper目前不返回详细链接列表
+            }
+            print(f"✅ 增强版检测完成: 免费={availability['is_free']}, 置信度={availability['confidence']}")
+            
+        except Exception as e:
+            logger.warning(f"增强版scraper检测失败，回退到旧版本: {e}")
+            availability = check_full_text_availability(pmid)
+            availability['source'] = 'fallback_scraper'
+    else:
+        print("⚠️ 增强版scraper不可用，使用旧版本检测...")
+        availability = check_full_text_availability(pmid)
+        availability['source'] = 'legacy_scraper'
     
     # 初始化结果，包含parse_record需要的字段
     result = {
