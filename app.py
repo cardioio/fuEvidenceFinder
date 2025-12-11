@@ -248,6 +248,103 @@ def status():
     """获取当前搜索状态"""
     return jsonify(search_status)
 
+@app.route('/api/translate', methods=['POST'])
+def translate_text():
+    """翻译文本API"""
+    try:
+        data = request.json
+        text = data.get('text', '')
+        target_language = data.get('target_language', 'zh')
+        
+        if not text:
+            return jsonify({'success': False, 'error': '文本不能为空'})
+        
+        # 调用实际的翻译API
+        translation = call_translate_api(text, target_language)
+        
+        if translation:
+            return jsonify({
+                'success': True,
+                'translation': translation,
+                'original_text': text
+            })
+        else:
+            # 如果翻译失败，返回原文
+            return jsonify({
+                'success': True,
+                'translation': text,
+                'original_text': text,
+                'note': '翻译服务暂时不可用，显示原文'
+            })
+            
+    except Exception as e:
+        logger.error(f"翻译错误: {e}")
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        })
+
+def call_translate_api(text, target_language='zh'):
+    """
+    调用翻译API
+    
+    Args:
+        text: 要翻译的文本
+        target_language: 目标语言，默认为中文
+        
+    Returns:
+        翻译后的文本
+    """
+    try:
+        # 使用DeepSeek API进行翻译
+        endpoint = API_ENDPOINTS[2]  # DeepSeek API
+        api_key = api_key_pool.get_available_key()
+        
+        if not api_key:
+            logger.error("没有可用的API密钥进行翻译")
+            return None
+            
+        headers = {
+            'Content-Type': 'application/json',
+            'Authorization': f'Bearer {api_key}'
+        }
+        
+        prompt = f"请将以下英文文献标题翻译成中文，保持专业性和准确性，只返回翻译结果，不要添加任何解释：\n\n{text}"
+        
+        payload = {
+            'model': 'deepseek-chat',
+            'messages': [
+                {
+                    'role': 'user',
+                    'content': prompt
+                }
+            ],
+            'max_tokens': 200,
+            'temperature': 0.1
+        }
+        
+        response = requests.post(endpoint, headers=headers, json=payload, timeout=30)
+        
+        if response.status_code == 200:
+            data = response.json()
+            if 'choices' in data and len(data['choices']) > 0:
+                translation = data['choices'][0]['message']['content'].strip()
+                api_key_pool.report_success(api_key)
+                logger.info(f"翻译成功: {text[:50]}... -> {translation[:50]}...")
+                return translation
+            else:
+                api_key_pool.report_failure(api_key, "invalid_response")
+                logger.error("翻译API返回格式错误")
+                return None
+        else:
+            api_key_pool.report_failure(api_key, f"http_{response.status_code}")
+            logger.error(f"翻译API请求失败: {response.status_code} - {response.text}")
+            return None
+            
+    except Exception as e:
+        logger.error(f"翻译API调用异常: {e}")
+        return None
+
 @app.route('/stop_search', methods=['POST'])
 def stop_search():
     """停止搜索"""

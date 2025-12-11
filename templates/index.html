@@ -101,6 +101,26 @@
             border-color: #10b981 !important;
             box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.2) !important;
         }
+        
+        /* 表格单元格内容换行样式 */
+        .line-clamp-3 {
+            display: -webkit-box;
+            -webkit-line-clamp: 3;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+            word-wrap: break-word;
+            word-break: break-word;
+        }
+        
+        /* 表格响应式样式 */
+        .table-responsive {
+            overflow-x: auto;
+        }
+        
+        /* 确保表格行高合适 */
+        .table-row-auto-height {
+            height: auto;
+        }
     </style>
 </head>
 <body class="bg-gray-50 min-h-screen">
@@ -268,7 +288,7 @@
                         <div class="flex items-center justify-between">
                             <h3 class="text-gray-800 font-semibold">📋 搜索结果</h3>
                             <button 
-                                id="export-csv-btn" 
+                                id="exportBtn" 
                                 class="bg-brand-green hover:bg-green-600 text-white px-4 py-2 rounded-lg text-sm font-medium transition-all duration-200 shadow-md hover:shadow-lg flex items-center space-x-2 disabled:opacity-50 disabled:cursor-not-allowed"
                                 disabled
                             >
@@ -280,8 +300,8 @@
                         </div>
                     </div>
                     
-                    <div class="result-table overflow-auto max-h-[75vh] relative scroll-smooth">
-                        <table id="results-table" class="w-full border-collapse text-sm">
+                    <div class="result-table overflow-auto max-h-[75vh] relative scroll-smooth table-responsive">
+                        <table id="results-table" class="w-full border-collapse text-sm table-row-auto-height">
                             <thead class="bg-gray-100 sticky top-0 z-10 shadow-sm text-gray-700">
                                 <tr>
                                     <th class="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100">发表年份</th>
@@ -295,13 +315,14 @@
                                     <th class="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100">证据等级</th>
                                     <th class="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100">结论摘要</th>
                                     <th class="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100">标题</th>
+                                    <th class="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100">中文标题</th>
                                     <th class="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100">PMID</th>
                                     <th class="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100">全文状态</th>
                                 </tr>
                             </thead>
                             <tbody id="results-tbody" class="bg-white divide-y divide-gray-200">
                                 <tr>
-                                    <td colspan="13" class="px-6 py-8 text-center text-gray-500">
+                                    <td colspan="14" class="px-6 py-8 text-center text-gray-500">
                                         暂无搜索结果
                                     </td>
                                 </tr>
@@ -329,7 +350,7 @@
         const statusText = document.getElementById('status-text');
         const resultCount = document.getElementById('result-count');
         const stopBtn = document.getElementById('stop-btn');
-        const exportCsvBtn = document.getElementById('export-csv-btn');
+        const exportCsvBtn = document.getElementById('exportBtn');
         
         // 模态窗相关DOM元素
         const confirmModal = document.getElementById('confirm-modal');
@@ -370,18 +391,22 @@
         });
         
         // CSV导出按钮事件监听器
-        exportCsvBtn.addEventListener('click', exportToCsv);
+        const exportBtn = document.getElementById('exportBtn');
+        if (exportBtn) {
+            exportBtn.addEventListener('click', exportToCSV);
+        }
         
         // 开始搜索
         function startSearch() {
             const keyword = searchInput.value.trim();
             if (!keyword) {
-                alert('请输入搜索关键词');
+                addLog('⚠️ 请输入搜索关键词', 'warning');
+                searchInput.focus();
                 return;
             }
             
             if (isSearching) {
-                alert('搜索正在进行中，请等待完成后再试');
+                addLog('⚠️ 搜索正在进行中，请等待完成后再试', 'warning');
                 return;
             }
             
@@ -704,6 +729,9 @@
                                             updateStatus('搜索完成', 'completed');
                                             addLog(`搜索完成，共获取 ${processedResults} 条结果`, 'success');
                                             
+                                            // 更新导出按钮状态（如果有结果）
+                                            updateExportButtonState(processedResults > 0);
+                                            
                                             // 更新停止按钮为重新搜索状态
                                             const stopBtn = document.getElementById('stop-btn');
                                             stopBtn.innerHTML = '🔄 重新搜索';
@@ -715,6 +743,9 @@
                                             updateSearchButton(false);
                                             updateStatus('搜索已停止', 'stopped');
                                             addLog(`搜索已停止，已获取 ${processedResults} 条结果`, 'warning');
+                                            
+                                            // 更新导出按钮状态（如果有结果）
+                                            updateExportButtonState(processedResults > 0);
                                         }
                                     } catch (parseError) {
                                         console.error('解析数据出错:', parseError, '原始数据:', line);
@@ -797,13 +828,13 @@
         }
         
         // CSV导出功能
-        function exportToCsv() {
+        function exportToCSV() {
             const table = document.getElementById('results-table');
             const rows = table.querySelectorAll('tbody tr');
             
             // 检查是否有数据可导出
             if (rows.length === 0 || (rows.length === 1 && rows[0].querySelector('td[colspan]'))) {
-                alert('暂无搜索结果可供导出');
+                addLog('⚠️ 暂无搜索结果可供导出', 'warning');
                 return;
             }
             
@@ -920,7 +951,7 @@
         function clearResults() {
             resultsTbody.innerHTML = `
                 <tr>
-                    <td colspan="13" class="px-6 py-8 text-center text-gray-500">
+                    <td colspan="14" class="px-6 py-8 text-center text-gray-500">
                         暂无搜索结果
                     </td>
                 </tr>
@@ -928,10 +959,48 @@
             updateExportButtonState(false); // 更新导出按钮状态
         }
         
+        // 翻译标题函数
+        async function translateTitle(title, pmid) {
+            const translationElement = document.getElementById(`translation-${pmid}`);
+            if (!translationElement) return;
+            
+            try {
+                // 调用后端API进行翻译
+                const response = await fetch('/api/translate', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        text: title,
+                        target_language: 'zh'
+                    })
+                });
+                
+                if (!response.ok) {
+                    throw new Error(`翻译请求失败: ${response.status}`);
+                }
+                
+                const data = await response.json();
+                
+                if (data.success && data.translation) {
+                    translationElement.innerHTML = data.translation;
+                    translationElement.title = data.translation;
+                } else {
+                    translationElement.innerHTML = '<span class="text-gray-400 italic">翻译失败</span>';
+                    translationElement.title = '翻译失败';
+                }
+            } catch (error) {
+                console.error('翻译错误:', error);
+                translationElement.innerHTML = '<span class="text-gray-400 italic">翻译错误</span>';
+                translationElement.title = '翻译错误';
+            }
+        }
+
         // 添加单行结果
         function addResultRow(result) {
             // 如果是第一行结果，清空"暂无搜索结果"提示
-            const emptyRow = resultsTbody.querySelector('tr td[colspan="13"]');
+            const emptyRow = resultsTbody.querySelector('tr td[colspan="14"]');
             if (emptyRow) {
                 resultsTbody.innerHTML = '';
             }
@@ -989,27 +1058,32 @@
             };
 
             row.innerHTML = `
-                <td class="px-2 py-4 whitespace-nowrap text-xs text-gray-900">${publishedYear}</td>
-                <td class="px-2 py-4 whitespace-nowrap text-xs text-gray-900">${dataCollectionYear}</td>
-                <td class="px-2 py-4 whitespace-nowrap text-xs text-gray-900">${country}</td>
-                <td class="px-2 py-4 whitespace-nowrap text-xs text-gray-900">${studyType}</td>
-                <td class="px-2 py-4 whitespace-nowrap text-xs text-gray-900">${studySubject}</td>
-                <td class="px-2 py-4 whitespace-nowrap text-xs text-gray-900">${sampleSize}</td>
-                <td class="px-2 py-4 text-xs text-gray-900 max-w-24">
-                    <div class="truncate" title="${recommendedDose}">${truncateText(recommendedDose, 25)}</div>
+                <td class="px-3 py-4 text-xs text-gray-900 align-top min-w-[80px]">${publishedYear}</td>
+                <td class="px-3 py-4 text-xs text-gray-900 align-top min-w-[100px]">${dataCollectionYear}</td>
+                <td class="px-3 py-4 text-xs text-gray-900 align-top min-w-[90px]">${country}</td>
+                <td class="px-3 py-4 text-xs text-gray-900 align-top min-w-[100px]">${studyType}</td>
+                <td class="px-3 py-4 text-xs text-gray-900 align-top min-w-[120px]">${studySubject}</td>
+                <td class="px-3 py-4 text-xs text-gray-900 align-top min-w-[80px]">${sampleSize}</td>
+                <td class="px-3 py-4 text-xs text-gray-900 align-top min-w-[180px] max-w-[250px]">
+                    <div class="break-words" title="${recommendedDose}">${recommendedDose}</div>
                 </td>
-                <td class="px-2 py-4 text-xs text-gray-900 max-w-24">
-                    <div class="truncate" title="${mechanism}">${truncateText(mechanism, 25)}</div>
+                <td class="px-3 py-4 text-xs text-gray-900 align-top min-w-[180px] max-w-[250px]">
+                    <div class="break-words" title="${mechanism}">${mechanism}</div>
                 </td>
-                <td class="px-2 py-4 whitespace-nowrap text-xs text-gray-900">${evidenceLevel}</td>
-                <td class="px-2 py-4 text-xs text-gray-900 max-w-32">
-                    <div class="truncate" title="${conclusion}">${truncateText(conclusion, 30)}</div>
+                <td class="px-3 py-4 text-xs text-gray-900 align-top min-w-[90px]">${evidenceLevel}</td>
+                <td class="px-3 py-4 text-xs text-gray-900 align-top min-w-[200px] max-w-[300px]">
+                    <div class="break-words" title="${conclusion}">${conclusion}</div>
                 </td>
-                <td class="px-2 py-4 text-xs text-gray-900 max-w-40">
-                    <div class="truncate" title="${title}">${truncateText(title, 35)}</div>
+                <td class="px-3 py-4 text-xs text-gray-900 align-top min-w-[200px] max-w-[300px]">
+                    <div class="break-words" title="${title}">${title}</div>
                 </td>
-                <td class="px-2 py-4 whitespace-nowrap text-xs text-gray-900">${getPMIDLink(pmid)}</td>
-                <td class="px-2 py-4 whitespace-nowrap text-xs text-gray-900">
+                <td class="px-3 py-4 text-xs text-gray-900 align-top min-w-[200px] max-w-[300px]">
+                    <div class="break-words" id="translation-${pmid}" title="翻译中...">
+                        <span class="text-gray-400 italic">翻译中...</span>
+                    </div>
+                </td>
+                <td class="px-3 py-4 text-xs text-gray-900 align-top min-w-[100px]">${getPMIDLink(pmid)}</td>
+                <td class="px-3 py-4 text-xs text-gray-900 align-top min-w-[100px]">
                     <span class="px-2 py-1 rounded-full text-xs font-medium ${getFulltextStatusText(fulltextStatus) === '免费' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}">
                         ${getFulltextStatusText(fulltextStatus)}
                     </span>
@@ -1023,6 +1097,11 @@
                 row.style.transition = 'opacity 0.3s ease';
                 row.classList.remove('opacity-0');
             }, 10);
+            
+            // 异步翻译标题
+            if (title && title !== '-' && pmid && pmid !== '-') {
+                translateTitle(title, pmid);
+            }
             
             // 更新导出按钮状态（如果有数据）
             updateExportButtonState(true);

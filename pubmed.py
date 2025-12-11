@@ -395,7 +395,12 @@ def parse_record(article):
     data['标题'] = article_data.get('ArticleTitle', '')
     data['PMID'] = medline.get('PMID', '')
 
-    # 如果启用全文提取功能，获取PMID并进行全文分析（仅用于日志输出，不返回到前端）
+    # 初始化免费全文状态字段
+    data['免费全文状态'] = "未检查"
+    data['免费全文链接数'] = 0
+    data['全文提取状态'] = "未尝试"
+
+    # 如果启用全文提取功能，获取PMID并进行全文分析
     if ENABLE_FULLTEXT_EXTRACTION and data['PMID']:
         try:
             print(f"  🔍 正在检查PMID {data['PMID']} 的全文可用性...")
@@ -403,11 +408,17 @@ def parse_record(article):
             # 使用全文分析功能
             fulltext_analysis = analyze_pmid_with_full_text(data['PMID'])
             
-            # 记录全文分析结果到日志（不返回到前端）
+            # 更新免费全文状态字段
             if fulltext_analysis.get('is_free'):
                 links_count = len(fulltext_analysis.get('links', []))
+                data['免费全文状态'] = "免费"
+                data['免费全文链接数'] = links_count
+                data['全文提取状态'] = "可获取" if fulltext_analysis.get('extraction_success', False) else "获取失败"
                 print(f"  ✅ 发现免费全文: {links_count} 个链接")
             else:
+                data['免费全文状态'] = "付费"
+                data['免费全文链接数'] = 0
+                data['全文提取状态'] = "不可获取"
                 if fulltext_analysis.get('extraction_success', False):
                     print(f"  ✅ 原文网页全文获取成功")
                 else:
@@ -415,7 +426,38 @@ def parse_record(article):
                 
         except Exception as e:
             logger.error(f"处理PMID {data['PMID']} 全文分析时出错: {e}")
+            data['免费全文状态'] = "检查失败"
+            data['免费全文链接数'] = 0
+            data['全文提取状态'] = "检查失败"
             print(f"  ❌ 付费文献，原文获取失败")
+    else:
+        # 如果未启用全文提取，使用传统方法检查全文可用性
+        try:
+            pmid = data['PMID']
+            if pmid and ENHANCED_SCRAPER_AVAILABLE:
+                # 使用增强版scraper检查
+                enhanced_result = enhanced_scraper.check_fulltext_comprehensive(pmid)
+                if enhanced_result:
+                    data['免费全文状态'] = enhanced_result.get('free_status', '未检查')
+                    data['免费全文链接数'] = enhanced_result.get('free_links_count', 0)
+                    data['全文提取状态'] = enhanced_result.get('extraction_status', '未尝试')
+                else:
+                    # 回退到传统方法
+                    is_free = check_full_text_availability(pmid)
+                    data['免费全文状态'] = "免费" if is_free else "付费"
+                    data['免费全文链接数'] = 1 if is_free else 0
+                    data['全文提取状态'] = "未尝试"
+            elif pmid:
+                # 使用传统方法
+                is_free = check_full_text_availability(pmid)
+                data['免费全文状态'] = "免费" if is_free else "付费"
+                data['免费全文链接数'] = 1 if is_free else 0
+                data['全文提取状态'] = "未尝试"
+        except Exception as e:
+            logger.error(f"检查全文状态时出错: {e}")
+            data['免费全文状态'] = "检查失败"
+            data['免费全文链接数'] = 0
+            data['全文提取状态'] = "检查失败"
 
     return data
 
