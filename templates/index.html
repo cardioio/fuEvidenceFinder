@@ -1028,27 +1028,7 @@
             updateExportButtonState(true);
         }
         
-        // 显示结果详情（可选功能）
-        function showResultDetails(result) {
-            const details = `
-标题: ${result.标题 || '-'}
-PMID: ${result.PMID || '-'}
-发表年份: ${result.发表年份 || '-'}
-国家: ${result.国家 || '-'}
-研究类型: ${result.研究类型 || '-'}
-研究对象: ${result.研究对象 || '-'}
-样本量: ${result.样本量 || '-'}
-作用机理: ${result.作用机理 || '-'}
-推荐剂量: ${result['推荐补充剂量/用法'] || '-'}
-数据收集年份: ${result.数据收集年份 || '-'}
-证据等级: ${result.证据等级 || '-'}
-结论摘要: ${result.结论摘要 || '-'}
-摘要主要内容: ${result.摘要主要内容 || '-'}
-免费全文状态: ${result.免费全文状态 || '-'}
-            `;
-            
-            alert(details);
-        }
+
         
         // 显示结果（兼容性函数）
         function displayResults(results) {
@@ -1072,32 +1052,6 @@ PMID: ${result.PMID || '-'}
             
             // 焦点到搜索框
             searchInput.focus();
-            
-            // 添加点击事件监听器到表格行
-            resultsTbody.addEventListener('click', function(e) {
-                const row = e.target.closest('tr');
-                if (row && !row.querySelector('td[colspan]')) { // 忽略空状态行
-                    const pmidElement = row.querySelector('td:nth-child(12) a');
-                    if (pmidElement) {
-                        const result = {
-                            '标题': row.querySelector('td:nth-child(11)').textContent,
-                            'PMID': pmidElement.textContent,
-                            '发表年份': row.querySelector('td:nth-child(1)').textContent,
-                            '数据收集年份': row.querySelector('td:nth-child(2)').textContent,
-                            '国家': row.querySelector('td:nth-child(3)').textContent,
-                            '研究类型': row.querySelector('td:nth-child(4)').textContent,
-                            '研究对象': row.querySelector('td:nth-child(5)').textContent,
-                            '样本量': row.querySelector('td:nth-child(6)').textContent,
-                            '作用机理': row.querySelector('td:nth-child(8)').textContent,
-                            '推荐补充剂量/用法': row.querySelector('td:nth-child(7)').textContent,
-                            '证据等级': row.querySelector('td:nth-child(9)').textContent,
-                            '结论摘要': row.querySelector('td:nth-child(10)').textContent,
-                            '免费全文状态': row.querySelector('td:nth-child(13)').textContent
-                        };
-                        showResultDetails(result);
-                    }
-                }
-            });
         });
 
 
