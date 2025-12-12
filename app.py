@@ -107,7 +107,7 @@ def add_log(message, level='info'):
     search_status['logs'].append(log_entry)
     logger.info(f"[{timestamp}] {message}")
 
-def process_search(keyword, max_results=20, enable_fulltext=True, data_queue=None):
+def process_search(keyword, max_results=20, enable_fulltext=True, data_queue=None, model='gpt-5-mini'):
     """
     实际的 PubMed 搜索过程，将结果和日志放入队列
     
@@ -177,7 +177,7 @@ def process_search(keyword, max_results=20, enable_fulltext=True, data_queue=Non
             
             try:
                 # 解析单篇文献
-                data = parse_record(article, enable_fulltext)
+                data = parse_record(article, enable_fulltext, target_model=model)
                 results_count += 1
                 
                 # 实时显示全文处理状态
@@ -267,7 +267,7 @@ def stream_search():
     keyword = request.args.get('keyword', '')
     max_results = request.args.get('max_results', default=20, type=int)
     enable_fulltext = request.args.get('enable_fulltext', default='true').lower() == 'true'
-    
+    model = request.args.get('model', default='gpt-5-mini')
     # 参数验证
     if not keyword:
         return jsonify({'error': '缺少关键词参数'}), 400
@@ -294,7 +294,7 @@ def stream_search():
         # 创建并启动搜索线程
         search_thread = threading.Thread(
             target=process_search,
-            args=(keyword, max_results, enable_fulltext, data_queue),
+            args=(keyword, max_results, enable_fulltext, data_queue, model),
             daemon=True
         )
         search_thread.start()

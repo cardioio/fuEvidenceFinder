@@ -136,12 +136,12 @@
         .table-row-auto-height {
             height: auto;
         }
-        
+
         /* Google风格搜索栏样式 */
         #search-section {
             transition: all 0.5s ease;
         }
-        
+
         #search-section.collapsed {
             position: fixed;
             top: 20px;
@@ -149,29 +149,29 @@
             width: auto;
             z-index: 100;
         }
-        
+
         #search-section.collapsed .search-container {
             width: 50px;
             height: 50px;
             overflow: hidden;
             border-radius: 50%;
         }
-        
+
         #search-section.collapsed .search-input-wrapper {
             display: none;
         }
-        
+
         #search-section.collapsed #search-btn {
             width: 100%;
             min-width: 50px;
             padding: 0;
             border-radius: 50%;
         }
-        
+
         #search-section.collapsed #search-btn-text {
             display: none;
         }
-        
+
         /* 页脚样式 */
         footer {
             color: #70757a;
@@ -182,17 +182,21 @@
 
 <body class="bg-gray-50 min-h-screen">
     <!-- 主容器 -->
-    <div id="main-layout" class="container mx-auto px-4 min-h-screen flex flex-col justify-center transition-all duration-500 pb-20">
+    <div id="main-layout"
+        class="container mx-auto px-4 min-h-screen flex flex-col justify-center transition-all duration-500 pb-20">
         <!-- 顶部区域 -->
-<div id="site-logo" class="text-center py-8 transition-all duration-300">
-        <h1 class="text-3xl font-bold mb-2" style="font-family: SFMono-Regular, Consolas, 'Liberation Mono', monospace; background-clip: unset; -webkit-background-clip: unset; color: rgba(66, 132, 244, 1); letter-spacing: -1.5px;">Fu llMED</h1>
-    </div>
+        <div id="site-logo" class="text-center py-8 transition-all duration-300">
+            <h1 class="text-3xl font-bold mb-2"
+                style="font-family: SFMono-Regular, Consolas, 'Liberation Mono', monospace; background-clip: unset; -webkit-background-clip: unset; color: rgba(66, 132, 244, 1); letter-spacing: -1.5px;">
+                FullMED</h1>
+        </div>
 
         <!-- 搜索区域 -->
-        <div class="max-w-4xl mx-auto flex flex-col items-center">
+        <div class="max-w-3xl w-full mx-auto flex flex-col items-center">
 
             <div id="search-section" class="mb-10 w-full">
-                <div class="search-container flex items-center bg-white rounded-full shadow-[0_2px_12px_rgba(0,0,0,0.08)] border border-gray-200 p-1.5 transition-all duration-300 focus-within:shadow-xl focus-within:border-brand-blue/50 focus-within:ring-4 focus-within:ring-brand-blue/10">
+                <div
+                    class="search-container flex items-center bg-white rounded-full shadow-[0_2px_12px_rgba(0,0,0,0.08)] border border-gray-200 p-1.5 transition-all duration-300 focus-within:shadow-xl focus-within:border-brand-blue/50 focus-within:ring-4 focus-within:ring-brand-blue/10">
 
                     <div class="pl-6 text-gray-400">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
@@ -211,8 +215,10 @@
                     <button id="search-btn"
                         class="flex-none bg-brand-blue hover:bg-blue-600 text-white font-medium text-lg py-3 px-8 rounded-full transition-all duration-200 shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center min-w-[120px]">
                         <span id="search-btn-text">搜索</span>
-                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 ml-2 hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 ml-2 hidden" fill="none"
+                            viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
                         </svg>
                         <div id="loading-spinner"
                             class="hidden loading-spinner w-5 h-5 border-2 border-white border-t-transparent rounded-full">
@@ -270,6 +276,27 @@
                                 <p class="text-xs text-gray-500 mt-1">建议：10-50篇为最佳搜索范围</p>
                             </div>
 
+                            <div class="mb-6">
+                                <label for="ai-model" class="block text-sm font-medium text-gray-700 mb-2">
+                                    选择 AI 模型
+                                </label>
+                                <div class="relative">
+                                    <select id="ai-model"
+                                        class="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-brand-blue focus:border-transparent transition-all duration-200 bg-white appearance-none">
+                                        <option value="gpt-3.5-turbo" selected>gpt-3.5-turbo (推荐 - 均衡)</option>
+                                        <option value="gpt-4o-mini">gpt-4o-mini (快速)</option>
+                                    </select>
+                                    <div class="absolute inset-y-0 right-0 flex items-center px-2 pointer-events-none">
+                                        <svg class="w-4 h-4 text-gray-400" fill="none" stroke="currentColor"
+                                            viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                                                d="M19 9l-7 7-7-7"></path>
+                                        </svg>
+                                    </div>
+                                </div>
+                                <p class="text-xs text-gray-500 mt-1">不同的模型在分析速度和总结质量上可能有所差异</p>
+                            </div>
+
                             <!-- 原文搜索选项 -->
                             <div class="mb-6">
                                 <div class="flex items-center">
@@ -308,7 +335,7 @@
                 </div>
             </div>
 
-            <div id="execution-section" class="hidden">
+            <div id="execution-section" class="hidden max-w-4xl">
                 <!-- 搜索状态栏 -->
                 <div class="bg-white rounded-lg shadow-md p-4 mb-6">
                     <div class="flex items-center justify-between">
@@ -358,51 +385,51 @@
                         </div>
                     </div>
 
-                    <div class="result-table overflow-auto max-h-[75vh] relative scroll-smooth table-responsive">
-                        <table id="results-table" class="w-full border-collapse text-sm table-row-auto-height">
+                    <div class="result-table overflow-x-auto overflow-y-auto max-h-[75vh] relative scroll-smooth">
+                        <table id="results-table" class="min-w-full border-collapse text-sm">
                             <thead class="bg-gray-100 sticky top-0 z-10 shadow-sm text-gray-700">
                                 <tr>
                                     <th
-                                        class="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100">
+                                        class="px-2 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100 w-20">
                                         发表年份</th>
                                     <th
-                                        class="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100">
+                                        class="px-2 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100 w-24">
                                         数据收集年份</th>
                                     <th
-                                        class="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100">
+                                        class="px-2 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100 w-16">
                                         国家</th>
                                     <th
-                                        class="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100">
+                                        class="px-2 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100 w-20">
                                         研究类型</th>
                                     <th
-                                        class="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100">
+                                        class="px-2 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100 w-24">
                                         研究对象</th>
                                     <th
-                                        class="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100">
+                                        class="px-2 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100 w-16">
                                         样本量</th>
                                     <th
-                                        class="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100">
+                                        class="px-2 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100 w-32">
                                         推荐补充剂量</th>
-                                        <th
-                                            class="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100">
-                                            作用机理</th>
-                                        <th
-                                        class="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100">
+                                    <th
+                                        class="px-2 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100 w-32">
+                                        作用机理</th>
+                                    <th
+                                        class="px-2 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100 w-20">
                                         证据等级</th>
                                     <th
-                                        class="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100">
+                                        class="px-2 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100 w-48">
                                         结论摘要</th>
                                     <th
-                                        class="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100">
+                                        class="px-2 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100 w-64">
                                         标题</th>
                                     <th
-                                        class="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100">
+                                        class="px-2 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100 w-64">
                                         中文标题</th>
                                     <th
-                                        class="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100">
+                                        class="px-2 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100 w-20">
                                         PMID</th>
                                     <th
-                                        class="px-3 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100">
+                                        class="px-2 py-3 text-left text-xs font-semibold uppercase tracking-wider whitespace-nowrap bg-gray-100 w-16">
                                         是否免费</th>
                                 </tr>
                             </thead>
@@ -419,83 +446,83 @@
 
                 <!-- 添加底部间距，避免内容被固定footer遮挡 -->
                 <div class="h-16"></div>
+            </div>
+
+            <!-- 页脚 -->
+            <footer class="text-center py-4 text-gray-500">
+                <p>All copyright reserved by @LikeMED 2025</p>
+            </footer>
         </div>
-        
-        <!-- 页脚 -->
-        <footer class="text-center py-4 text-gray-500">
-            <p>All copyright reserved by @LikeMED 2025</p>
-        </footer>
-    </div>
 
-    <script src="/static/app.js"></script>
-    <script>
-        // Google风格搜索栏功能
-        document.addEventListener('DOMContentLoaded', function() {
-            const searchSection = document.getElementById('search-section');
-            const executionSection = document.getElementById('execution-section');
-            const searchBtn = document.getElementById('search-btn');
-            const searchInput = document.getElementById('search-input');
-            const searchBtnText = document.getElementById('search-btn-text');
-            const searchIcon = searchBtn.querySelector('svg');
+        <script src="/static/app.js"></script>
+        <script>
+            // Google风格搜索栏功能
+            document.addEventListener('DOMContentLoaded', function () {
+                const searchSection = document.getElementById('search-section');
+                const executionSection = document.getElementById('execution-section');
+                const searchBtn = document.getElementById('search-btn');
+                const searchInput = document.getElementById('search-input');
+                const searchBtnText = document.getElementById('search-btn-text');
+                const searchIcon = searchBtn.querySelector('svg');
 
-            const mainLayout = document.getElementById('main-layout'); 
-            const siteLogo = document.getElementById('site-logo');     
-            
-            // 监听结果区域的变化
-            const observer = new MutationObserver(function(mutations) {
-                mutations.forEach(function(mutation) {
-                    if (mutation.attributeName === 'class') {
-                        // 判断结果区域是否显示
-                        if (!executionSection.classList.contains('hidden')) {
-                            // === 状态 A: 搜索成功，显示结果 ===
-                            // 1. 搜索栏变小飞到右上角
-                            searchSection.classList.add('collapsed');
-                            searchIcon.classList.remove('hidden');
+                const mainLayout = document.getElementById('main-layout');
+                const siteLogo = document.getElementById('site-logo');
 
-                            // 2. 布局改为顶部对齐
-                            mainLayout.classList.remove('justify-center', 'min-h-screen');
-                            mainLayout.classList.add('justify-start', 'pt-10');
+                // 监听结果区域的变化
+                const observer = new MutationObserver(function (mutations) {
+                    mutations.forEach(function (mutation) {
+                        if (mutation.attributeName === 'class') {
+                            // 判断结果区域是否显示
+                            if (!executionSection.classList.contains('hidden')) {
+                                // === 状态 A: 搜索成功，显示结果 ===
+                                // 1. 搜索栏变小飞到右上角
+                                searchSection.classList.add('collapsed');
+                                searchIcon.classList.remove('hidden');
 
-                            // 3. 隐藏大Logo
-                            siteLogo.classList.add('hidden'); 
-                        } else {
-                            // === 状态 B: 重新搜索/重置 (这就是你缺失的部分) ===
-                            // 1. 搜索栏恢复原状
-                            searchSection.classList.remove('collapsed');
-                            searchIcon.classList.add('hidden');
+                                // 2. 布局改为顶部对齐
+                                mainLayout.classList.remove('justify-center', 'min-h-screen');
+                                mainLayout.classList.add('justify-start', 'pt-10');
 
-                            // 2. 布局恢复垂直居中
-                            mainLayout.classList.add('justify-center', 'min-h-screen');
-                            mainLayout.classList.remove('justify-start', 'pt-10');
+                                // 3. 隐藏大Logo
+                                siteLogo.classList.add('hidden');
+                            } else {
+                                // === 状态 B: 重新搜索/重置 (这就是你缺失的部分) ===
+                                // 1. 搜索栏恢复原状
+                                searchSection.classList.remove('collapsed');
+                                searchIcon.classList.add('hidden');
 
-                            // 3. 显示大Logo
-                            siteLogo.classList.remove('hidden');
-                            
-                            // 4. 清空输入框并聚焦 (可选优化体验)
-                            searchInput.value = '';
-                            setTimeout(() => searchInput.focus(), 100);
+                                // 2. 布局恢复垂直居中
+                                mainLayout.classList.add('justify-center', 'min-h-screen');
+                                mainLayout.classList.remove('justify-start', 'pt-10');
+
+                                // 3. 显示大Logo
+                                siteLogo.classList.remove('hidden');
+
+                                // 4. 清空输入框并聚焦 (可选优化体验)
+                                searchInput.value = '';
+                                setTimeout(() => searchInput.focus(), 100);
+                            }
                         }
+                    });
+                });
+
+                observer.observe(executionSection, { attributes: true });
+
+                // 点击折叠后的搜索图标，临时展开搜索栏（不回正中，只在右上角展开）
+                searchBtn.addEventListener('click', function (e) {
+                    if (searchSection.classList.contains('collapsed') && !searchBtn.hasAttribute('disabled')) {
+                        e.stopPropagation();
+                        e.preventDefault();
+
+                        searchSection.classList.remove('collapsed');
+                        searchIcon.classList.add('hidden');
+                        setTimeout(() => {
+                            searchInput.focus();
+                        }, 300);
                     }
                 });
             });
-            
-            observer.observe(executionSection, { attributes: true });
-            
-            // 点击折叠后的搜索图标，临时展开搜索栏（不回正中，只在右上角展开）
-            searchBtn.addEventListener('click', function(e) {
-                if (searchSection.classList.contains('collapsed') && !searchBtn.hasAttribute('disabled')) {
-                    e.stopPropagation();
-                    e.preventDefault();
-                    
-                    searchSection.classList.remove('collapsed');
-                    searchIcon.classList.add('hidden');
-                    setTimeout(() => {
-                        searchInput.focus();
-                    }, 300);
-                }
-            });
-        });
-    </script>
+        </script>
 </body>
 
 </html>

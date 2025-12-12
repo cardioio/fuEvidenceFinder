@@ -325,7 +325,7 @@ def extract_sample_size(abstract_text):
             return match.group(1)
     return "需人工确认"
 
-def parse_record(article, enable_fulltext=False):
+def parse_record(article, enable_fulltext=False, target_model=None):
     """解析单篇文献，映射到目标表格列"""
     data = {}
     medline = article['MedlineCitation']
@@ -478,7 +478,7 @@ def parse_record(article, enable_fulltext=False):
             data['全文提取状态'] = "检查失败"
 
     # 使用AI统一提取信息（现在包含全文内容，如果可用）
-    logger.info("开始使用AI提取研究信息...")
+    logger.info(f"开始使用AI提取研究信息 (模型: {target_model})...")
     
     # 根据是否有全文内容决定提示词
     if data['免费全文状态'] == "免费" and fulltext_analysis and fulltext_analysis.get('extraction_success', False):
@@ -489,7 +489,7 @@ def parse_record(article, enable_fulltext=False):
         print("  🤖 正在将摘要发给AI询问中...")
         print(f"    📊 AI输入长度: {len(combined_text)} 字符")
     
-    ai_extracted = extract_info_with_ai(combined_text, article_title)
+    ai_extracted = extract_info_with_ai(combined_text, article_title, target_model=target_model)
     print("  📥 AI数据已返回")
     logger.info(f"AI提取结果：{ai_extracted}")
     

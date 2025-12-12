@@ -23,6 +23,7 @@ const confirmModal = document.getElementById('confirm-modal');
 const modalContent = document.getElementById('modal-content');
 const modalKeywordDisplay = document.getElementById('modal-keyword-display');
 const maxResultsInput = document.getElementById('max-results');
+const aiModelSelect = document.getElementById('ai-model');
 const enableFulltextCheckbox = document.getElementById('enable-fulltext');
 const confirmBtn = document.getElementById('confirm-btn');
 const cancelBtn = document.getElementById('cancel-btn');
@@ -222,6 +223,8 @@ function confirmSearch() {
     
     const maxResults = parseInt(maxResultsInput.value);
     const enableFulltext = enableFulltextCheckbox.checked;
+    // === 新增：获取选中的模型 ===
+    const selectedModel = aiModelSelect.value;
     
     // 显示确认按钮处理状态
     const { updateConfirmButtonState } = enhanceStatusFeedback();
@@ -230,13 +233,18 @@ function confirmSearch() {
     // 关闭模态窗
     closeModal();
     
-    // 开始执行搜索
-    executeSearch(currentKeyword, maxResults, enableFulltext);
+    // === 修复：传递模型参数给 executeSearch ===
+    executeSearch(currentKeyword, maxResults, enableFulltext, selectedModel);
 }
 
-// 执行搜索
-function executeSearch(keyword, maxResults, enableFulltext) {
+// 执行搜索 (修改函数签名，增加 model 参数)
+function executeSearch(keyword, maxResults, enableFulltext, model) {
     if (isSearching) return;
+    
+    // === 修复：如果没有传入模型参数，使用用户当前选择的模型 ===
+    if (!model && aiModelSelect) {
+        model = aiModelSelect.value;
+    }
     
     // 显示执行区域
     executionSection.classList.remove('hidden');
@@ -251,11 +259,14 @@ function executeSearch(keyword, maxResults, enableFulltext) {
     addLog(`搜索配置 - 关键词: "${keyword}"`, 'info');
     addLog(`搜索配置 - 最大结果数: ${maxResults}篇`, 'info');
     addLog(`搜索配置 - 原文搜索: ${enableFulltext ? '开启' : '关闭'}`, 'info');
+    // === 新增：记录模型配置日志 ===
+    addLog(`搜索配置 - AI模型: ${model}`, 'info');
     
     // 开始搜索
     isSearching = true;
     updateSearchButton(true);
-    startStreamSearch(keyword, maxResults, enableFulltext);
+    // === 修改调用，传入 model ===
+    startStreamSearch(keyword, maxResults, enableFulltext, model);
 }
 
 // 更新停止按钮为重新搜索状态
@@ -295,6 +306,8 @@ function restartSearch() {
     // 重置搜索参数
     document.getElementById('max-results').value = '20';
     document.getElementById('enable-fulltext').checked = true;
+    // === 修复：移除强制设置模型为 gpt-5-mini ===
+    // 保持用户当前选择的模型不变
     
     // 切换界面区域：隐藏执行区域，显示搜索区域
     executionSection.classList.add('hidden');
@@ -325,9 +338,14 @@ function restartSearch() {
 }
 
 // 开始流式搜索
-function startStreamSearch(keyword, maxResults = 20, enableFulltext = true) {
-    const url = `http://localhost:5001/stream_search?keyword=${encodeURIComponent(keyword)}&max_results=${maxResults}&enable_fulltext=${enableFulltext}`;
+function startStreamSearch(keyword, maxResults = 20, enableFulltext = true, model) {
+    // === 修复：如果没有传入模型参数，使用用户当前选择的模型 ===
+    if (!model && aiModelSelect) {
+        model = aiModelSelect.value;
+    }
     
+    // === 修改 URL，追加 model 参数 ===
+    const url = `http://localhost:5001/stream_search?keyword=${encodeURIComponent(keyword)}&max_results=${maxResults}&enable_fulltext=${enableFulltext}&model=${encodeURIComponent(model)}`;   
     // 创建 AbortController 用于取消请求
     currentController = new AbortController();
     
