@@ -182,11 +182,11 @@
 
 <body class="bg-gray-50 min-h-screen">
     <!-- 主容器 -->
-    <div class="container mx-auto px-4">
+    <div id="main-layout" class="container mx-auto px-4 min-h-screen flex flex-col justify-center transition-all duration-500 pb-20">
         <!-- 顶部区域 -->
-        <div class="text-center py-8">
-            <h1 class="text-3xl font-bold text-gray-800 mb-2">Fu llMED</h1>
-        </div>
+<div id="site-logo" class="text-center py-8 transition-all duration-300">
+        <h1 class="text-3xl font-bold mb-2" style="font-family: SFMono-Regular, Consolas, 'Liberation Mono', monospace; background-clip: unset; -webkit-background-clip: unset; color: rgba(66, 132, 244, 1); letter-spacing: -1.5px;">Fu llMED</h1>
+    </div>
 
         <!-- 搜索区域 -->
         <div class="max-w-4xl mx-auto flex flex-col items-center">
@@ -423,7 +423,7 @@
         
         <!-- 页脚 -->
         <footer class="text-center py-4 text-gray-500">
-            <p>all copyright reserved by LikeMED</p>
+            <p>All copyright reserved by @LikeMED 2025</p>
         </footer>
     </div>
 
@@ -437,16 +437,43 @@
             const searchInput = document.getElementById('search-input');
             const searchBtnText = document.getElementById('search-btn-text');
             const searchIcon = searchBtn.querySelector('svg');
+
+            const mainLayout = document.getElementById('main-layout'); 
+            const siteLogo = document.getElementById('site-logo');     
             
-            // 监听搜索开始事件（这里假设搜索成功后会显示execution-section）
+            // 监听结果区域的变化
             const observer = new MutationObserver(function(mutations) {
                 mutations.forEach(function(mutation) {
                     if (mutation.attributeName === 'class') {
+                        // 判断结果区域是否显示
                         if (!executionSection.classList.contains('hidden')) {
-                            // 搜索结果显示，折叠搜索栏
+                            // === 状态 A: 搜索成功，显示结果 ===
+                            // 1. 搜索栏变小飞到右上角
                             searchSection.classList.add('collapsed');
-                            // 显示放大镜图标
                             searchIcon.classList.remove('hidden');
+
+                            // 2. 布局改为顶部对齐
+                            mainLayout.classList.remove('justify-center', 'min-h-screen');
+                            mainLayout.classList.add('justify-start', 'pt-10');
+
+                            // 3. 隐藏大Logo
+                            siteLogo.classList.add('hidden'); 
+                        } else {
+                            // === 状态 B: 重新搜索/重置 (这就是你缺失的部分) ===
+                            // 1. 搜索栏恢复原状
+                            searchSection.classList.remove('collapsed');
+                            searchIcon.classList.add('hidden');
+
+                            // 2. 布局恢复垂直居中
+                            mainLayout.classList.add('justify-center', 'min-h-screen');
+                            mainLayout.classList.remove('justify-start', 'pt-10');
+
+                            // 3. 显示大Logo
+                            siteLogo.classList.remove('hidden');
+                            
+                            // 4. 清空输入框并聚焦 (可选优化体验)
+                            searchInput.value = '';
+                            setTimeout(() => searchInput.focus(), 100);
                         }
                     }
                 });
@@ -454,17 +481,14 @@
             
             observer.observe(executionSection, { attributes: true });
             
-            // 点击折叠后的搜索图标，重新展开搜索栏
+            // 点击折叠后的搜索图标，临时展开搜索栏（不回正中，只在右上角展开）
             searchBtn.addEventListener('click', function(e) {
                 if (searchSection.classList.contains('collapsed') && !searchBtn.hasAttribute('disabled')) {
                     e.stopPropagation();
                     e.preventDefault();
                     
-                    // 重新展开搜索栏
                     searchSection.classList.remove('collapsed');
-                    // 隐藏放大镜图标
                     searchIcon.classList.add('hidden');
-                    // 聚焦到搜索框
                     setTimeout(() => {
                         searchInput.focus();
                     }, 300);

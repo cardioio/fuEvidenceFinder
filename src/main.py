@@ -15,7 +15,6 @@ from src.data_parser import extract_info_with_regex, parse_record, DataParser
 from src.ai_extractor import extract_info_with_ai, AIExtractor
 from src.fulltext_extractor import check_full_text_availability, extract_full_text_content, analyze_pmid_with_full_text
 from src.api_key_manager import APIKeyPoolManager
-from src.tests import test_ai_extraction, test_api_key_pool, test_country_processing, run_comprehensive_test
 
 # 配置日志
 logging.basicConfig(
@@ -33,33 +32,6 @@ class MainApplication:
         self.config = ConfigManager()
         self.logger = logging.getLogger(__name__)
         
-    def run_test_mode(self, test_type: str = "all") -> Dict[str, Any]:
-        """
-        运行测试模式
-        
-        Args:
-            test_type: 测试类型 ("ai", "key", "country", "all")
-        
-        Returns:
-            测试结果字典
-        """
-        print("🧪 启动测试模式")
-        print("=" * 60)
-        
-        if test_type == "ai":
-            result = test_ai_extraction()
-        elif test_type == "key":
-            result = test_api_key_pool()
-        elif test_type == "country":
-            result = test_country_processing()
-        elif test_type == "all":
-            result = run_comprehensive_test()
-        else:
-            raise ValueError(f"未知的测试类型: {test_type}")
-        
-        print(f"✅ 测试完成: {result.get('test_name', '测试')}")
-        return result
-    
     def run_search_mode(self, query: str, max_results: int = 10) -> Dict[str, Any]:
         """
         运行搜索模式
@@ -337,15 +309,6 @@ def create_argument_parser() -> argparse.ArgumentParser:
     # 添加子命令
     subparsers = parser.add_subparsers(dest='command', help='可用命令')
     
-    # 测试命令
-    test_parser = subparsers.add_parser('test', help='运行测试功能')
-    test_parser.add_argument(
-        '--type', '-t',
-        choices=['ai', 'key', 'country', 'all'],
-        default='all',
-        help='测试类型 (默认: all)'
-    )
-    
     # 搜索命令
     search_parser = subparsers.add_parser('search', help='搜索PubMed文献')
     search_parser.add_argument('query', help='搜索查询字符串')
@@ -400,10 +363,7 @@ def main():
         print("=" * 80)
         
         # 根据命令执行相应功能
-        if args.command == 'test':
-            result = app.run_test_mode(args.type)
-            
-        elif args.command == 'search':
+        if args.command == 'search':
             result = app.run_search_mode(args.query, args.max_results)
             
         elif args.command == 'extract':
@@ -417,9 +377,7 @@ def main():
         if 'success' in result:
             print(f"   状态: {'成功' if result['success'] else '失败'}")
         
-        if args.command == 'test' and 'success_rate' in result:
-            print(f"   测试成功率: {result['success_rate']}%")
-        elif args.command == 'search' and 'found_results' in result:
+        if args.command == 'search' and 'found_results' in result:
             print(f"   找到结果: {result['found_results']} 条")
         elif args.command == 'extract' and 'extraction_results' in result:
             extraction_results = result['extraction_results']

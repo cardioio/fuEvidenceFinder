@@ -16,8 +16,6 @@ from src.fulltext_extractor import (
     extract_full_text_content,
     analyze_pmid_with_full_text
 )
-from src.tests import TestFunctions, test_ai_extraction, test_api_key_pool, test_country_processing, run_comprehensive_test
-
 # 导入主程序
 from src.main import MainApplication, main
 
@@ -54,13 +52,6 @@ __all__ = [
     'check_full_text_availability',
     'extract_full_text_content',
     'analyze_pmid_with_full_text',
-    
-    # 测试功能
-    'TestFunctions',
-    'test_ai_extraction',
-    'test_api_key_pool',
-    'test_country_processing',
-    'run_comprehensive_test',
     
     # 主程序
     'MainApplication',
