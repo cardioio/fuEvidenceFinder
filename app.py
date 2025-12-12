@@ -14,14 +14,75 @@ import logging
 import sys
 import os
 from datetime import datetime
+from queue import Queue
 
 # 导入 PubMed 搜索相关函数
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from pubmed import search_pubmed, fetch_details, parse_record, ENABLE_FULLTEXT_EXTRACTION
 
-# 配置日志
-logging.basicConfig(level=logging.INFO)
+# 配置日志 - 启用调试模式
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - [%(name)s:%(lineno)d] - %(message)s')
 logger = logging.getLogger(__name__)
+
+# 创建自定义日志处理器，将日志发送到前端
+class FrontendLogHandler(logging.Handler):
+    def __init__(self, queue):
+        super().__init__()
+        self.queue = queue
+        self.encoding = 'utf-8'
+    
+    def emit(self, record):
+        try:
+            # 格式化日志记录
+            message = self.format(record)
+            timestamp = datetime.now().strftime('%H:%M:%S')
+            
+            # 根据日志级别映射到前端使用的级别
+            level_map = {
+                logging.DEBUG: 'debug',
+                logging.INFO: 'info',
+                logging.WARNING: 'warning',
+                logging.ERROR: 'error',
+                logging.CRITICAL: 'error'
+            }
+            level = level_map.get(record.levelno, 'info')
+            
+            # 创建日志数据
+            log_data = {
+                'type': 'log',
+                'content': {
+                    'timestamp': timestamp,
+                    'level': level,
+                    'message': message,
+                    'module': record.name,
+                    'line': record.lineno,
+                    'function': record.funcName
+                }
+            }
+            
+            # 将日志添加到队列
+            self.queue.put(log_data)
+            
+        except Exception as e:
+            print(f"日志处理器出错: {e}")
+
+# 创建全局线程安全队列
+log_queue = Queue()
+
+# 创建前端日志处理器实例
+frontend_handler = FrontendLogHandler(log_queue)
+frontend_handler.setLevel(logging.DEBUG)
+
+# 设置日志格式
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - [%(name)s:%(lineno)d] - %(message)s')
+frontend_handler.setFormatter(formatter)
+
+# 为根日志记录器添加前端处理器
+root_logger = logging.getLogger()
+root_logger.addHandler(frontend_handler)
+
+# 设置Flask应用的日志级别
+logging.getLogger('flask').setLevel(logging.INFO)  # Flask自身日志设为INFO避免过多噪音
 
 # 创建 Flask 应用
 app = Flask(__name__)
@@ -46,22 +107,18 @@ def add_log(message, level='info'):
     search_status['logs'].append(log_entry)
     logger.info(f"[{timestamp}] {message}")
 
-def process_search(keyword, max_results=20, enable_fulltext=True):
+def process_search(keyword, max_results=20, enable_fulltext=True, data_queue=None):
     """
-    生成器函数：实际的 PubMed 搜索过程
-    将 print() 语句替换为 yield JSON 日志消息
-    在 parse_record 后立即 yield 数据行
+    实际的 PubMed 搜索过程，将结果和日志放入队列
     
     Args:
         keyword: 搜索关键词
         max_results: 最大结果数量 (1-100)
         enable_fulltext: 是否启用全文搜索
+        data_queue: 用于传递搜索结果和日志的队列
     """
-    # 保存原始的 print 函数
-    original_print = print
-    
-    def yield_log(message, level='info'):
-        """Yield 日志消息而不是打印"""
+    def add_log(message, level='info'):
+        """将日志添加到队列"""
         timestamp = datetime.now().strftime('%H:%M:%S')
         log_data = {
             'type': 'log',
@@ -71,91 +128,133 @@ def process_search(keyword, max_results=20, enable_fulltext=True):
                 'message': message
             }
         }
-        yield f"data: {json.dumps(log_data, ensure_ascii=False)}\n\n"
-    
-    # 临时替换 print 函数
-    def custom_print(*args, **kwargs):
-        message = ' '.join(str(arg) for arg in args)
-        return list(yield_log(message))
-    
-    # 将 print 替换为自定义函数
-    import builtins
-    builtins.print = custom_print
+        data_queue.put(log_data)
     
     try:
         # 记录搜索配置
-        yield from yield_log(f"🔍 搜索配置 - 关键词: {keyword}")
-        yield from yield_log(f"📊 搜索配置 - 最大结果数: {max_results}篇")
-        yield from yield_log(f"📄 搜索配置 - 原文搜索: {'开启' if enable_fulltext else '关闭'}")
+        add_log(f"🔍 搜索配置 - 关键词: {keyword}")
+        add_log(f"📊 搜索配置 - 最大结果数: {max_results}篇")
+        add_log(f"📄 搜索配置 - 原文搜索: {'开启' if enable_fulltext else '关闭'}")
         
         # 开始搜索流程
-        yield from yield_log(f"🚀 开始搜索关键词: {keyword}")
+        add_log(f"🚀 开始搜索关键词: {keyword}")
         
         # 1. 搜索 PubMed
-        yield from yield_log(f"🔍 正在搜索: {keyword.strip()}...")
+        add_log(f"🔍 正在搜索: {keyword.strip()}...")
         ids = search_pubmed(keyword, max_results)  # 使用参数化的最大结果数
         
         if not ids:
-            yield from yield_log("❌ 未找到相关文献，请检查搜索词是否正确", 'warning')
+            add_log("❌ 未找到相关文献，请检查搜索词是否正确", 'warning')
             return
         
-        yield from yield_log(f"✅ 找到 {len(ids)} 篇相关文献，开始获取详细信息...")
+        add_log(f"✅ 找到 {len(ids)} 篇相关文献，开始获取详细信息...")
         
         # 2. 获取详情
-        yield from yield_log(f"📥 正在获取 {len(ids)} 篇文献的详细信息...")
+        add_log(f"📥 正在获取 {len(ids)} 篇文献的详细信息...")
         articles = fetch_details(ids)
         
         if not articles:
-            yield from yield_log("❌ 获取文献详情失败", 'error')
+            add_log("❌ 获取文献详情失败", 'error')
             return
         
-        yield from yield_log(f"✅ 成功获取 {len(articles)} 篇文献详情，开始解析数据...")
+        add_log(f"✅ 成功获取 {len(articles)} 篇文献详情，开始解析数据...")
         
-        # 3. 解析数据 - 逐条处理并 yield
+        # 3. 解析数据 - 逐条处理并放入队列
         results_count = 0
+        fulltext_success_count = 0
+        paid_count = 0
+        failed_count = 0
+        ai_success_count = 0
+        
         for i, article in enumerate(articles):
             # 检查是否需要停止搜索（在处理过程中检查）
             if not search_status['is_running']:
-                yield from yield_log("⏹️ 搜索被用户中断", 'warning')
-                yield from yield_log(f"📊 已处理 {results_count} 篇文献", 'info')
+                add_log("⏹️ 搜索被用户中断", 'warning')
+                add_log(f"📊 已处理 {results_count} 篇文献", 'info')
                 break
             
-            yield from yield_log(f"⚙️ 正在处理文献 {i+1}/{len(articles)}...")
+            add_log(f"⚙️ 正在处理文献 {i+1}/{len(articles)}...")
             
             try:
                 # 解析单篇文献
-                data = parse_record(article)
+                data = parse_record(article, enable_fulltext)
                 results_count += 1
                 
-                # 立即 yield 数据行
+                # 实时显示全文处理状态
+                if enable_fulltext:
+                    free_status = data.get('免费全文状态', '未检查')
+                    if free_status == '免费':
+                        fulltext_success_count += 1
+                        add_log(f"  📤 文献 {i+1} 检测到免费全文，开始内容提取...", 'info')
+                    elif free_status == '付费':
+                        paid_count += 1
+                        add_log(f"  💰 文献 {i+1} 仅付费全文，跳过免费内容", 'warning')
+                    else:
+                        failed_count += 1
+                        add_log(f"  ⚠️ 文献 {i+1} 免费状态检查失败: {free_status}", 'warning')
+                
+                # 实时显示AI处理状态
+                if enable_fulltext:  # 只有启用了全文提取才会进行AI提取
+                    if data.get('AI提取状态') == '成功':
+                        ai_success_count += 1
+                        add_log(f"  🤖 文献 {i+1} AI提取完成", 'success')
+                    elif data.get('AI提取状态') == '失败':
+                        add_log(f"  ❌ 文献 {i+1} AI提取失败", 'error')
+                
+                # 立即将数据行放入队列
                 row_data = {
                     'type': 'row',
                     'content': data
                 }
-                yield f"data: {json.dumps(row_data, ensure_ascii=False)}\n\n"
+                data_queue.put(row_data)
                 
-                yield from yield_log(f"✅ 文献 {i+1} 处理完成: {data.get('标题', 'N/A')[:50]}...")
+                # 显示处理进度汇总
+                add_log(f"✅ 文献 {i+1} 处理完成: {data.get('标题', 'N/A')[:50]}...")
+                
+                if enable_fulltext:
+                    add_log(f"  📊 处理进度 - 全文: {fulltext_success_count}/{results_count}, AI: {ai_success_count}/{results_count}", 'info')
                 
                 # 短暂停顿以允许用户中断
                 time.sleep(0.1)
                 
+                # 立即检查停止状态（快速响应）
+                if not search_status['is_running']:
+                    add_log("⏹️ 搜索被用户中断", 'warning')
+                    add_log(f"📊 已处理 {results_count} 篇文献", 'info')
+                    break
+                
             except Exception as e:
                 error_msg = f"处理第 {i+1} 篇文献时出错: {str(e)}"
-                yield from yield_log(error_msg, 'error')
+                add_log(error_msg, 'error')
                 logger.error(error_msg)
                 continue
         
-        # 搜索完成
-        yield from yield_log(f"🎉 搜索完成！共处理 {results_count} 篇文献", 'success')
+        # 搜索完成 - 显示详细汇总
+        add_log(f"🎉 搜索完成！共处理 {results_count} 篇文献", 'success')
+        
+        if enable_fulltext:
+            # 确保付费全文和失败数的统计正确
+            # 如果没有明确标记为免费或付费，就视为失败
+            total_processed = fulltext_success_count + paid_count + failed_count
+            if total_processed < results_count:
+                failed_count += (results_count - total_processed)
+            
+            add_log(f"📊 全文处理统计:", 'info')
+            add_log(f"  ✅ 免费全文: {fulltext_success_count} 篇", 'success')
+            add_log(f"  💰 付费全文: {paid_count} 篇", 'warning')
+            add_log(f"  ❌ 检查失败: {failed_count} 篇", 'error')
+            
+            add_log(f"🔍 搜索任务完成，用户可查看结果表格", 'success')
         
     except Exception as e:
         error_msg = f"搜索过程中发生错误: {str(e)}"
-        yield from yield_log(error_msg, 'error')
+        add_log(error_msg, 'error')
         logger.error(error_msg)
     finally:
-        # 恢复原始的 print 函数
-        builtins.print = original_print
         search_status['is_running'] = False
+        # 发送结束信号
+        end_data = {'type': 'end'}
+        data_queue.put(end_data)
 
 @app.route('/')
 def index():
@@ -189,9 +288,20 @@ def stream_search():
     
     def generate():
         """生成流式响应"""
+        # 创建用于搜索数据的队列
+        data_queue = Queue()
+        
+        # 创建并启动搜索线程
+        search_thread = threading.Thread(
+            target=process_search,
+            args=(keyword, max_results, enable_fulltext, data_queue),
+            daemon=True
+        )
+        search_thread.start()
+        
         try:
-            # 直接使用 process_search 生成器，传递参数化配置
-            for data_chunk in process_search(keyword, max_results, enable_fulltext):
+            while True:
+                # 检查是否需要停止搜索
                 if not search_status['is_running']:
                     # 发送用户停止信号
                     stop_data = {
@@ -201,12 +311,30 @@ def stream_search():
                     yield f"data: {json.dumps(stop_data, ensure_ascii=False)}\n\n"
                     break
                 
-                yield data_chunk
-            
-            # 发送结束信号
-            end_data = {'type': 'end'}
-            yield f"data: {json.dumps(end_data, ensure_ascii=False)}\n\n"
-            
+                # 从数据队列获取数据
+                if not data_queue.empty():
+                    data = data_queue.get()
+                    
+                    # 检查是否搜索结束
+                    if data.get('type') == 'end':
+                        yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+                        # 发送剩余的Python日志
+                        while not log_queue.empty():
+                            log = log_queue.get()
+                            yield f"data: {json.dumps(log, ensure_ascii=False)}\n\n"
+                        break
+                    
+                    # 发送数据
+                    yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+                
+                # 从日志队列获取并发送日志
+                while not log_queue.empty():
+                    log = log_queue.get()
+                    yield f"data: {json.dumps(log, ensure_ascii=False)}\n\n"
+                
+                # 短暂睡眠避免CPU占用过高
+                time.sleep(0.05)
+                
         except Exception as e:
             logger.error(f"流式搜索出错: {e}")
             error_data = {
@@ -248,102 +376,7 @@ def status():
     """获取当前搜索状态"""
     return jsonify(search_status)
 
-@app.route('/api/translate', methods=['POST'])
-def translate_text():
-    """翻译文本API"""
-    try:
-        data = request.json
-        text = data.get('text', '')
-        target_language = data.get('target_language', 'zh')
-        
-        if not text:
-            return jsonify({'success': False, 'error': '文本不能为空'})
-        
-        # 调用实际的翻译API
-        translation = call_translate_api(text, target_language)
-        
-        if translation:
-            return jsonify({
-                'success': True,
-                'translation': translation,
-                'original_text': text
-            })
-        else:
-            # 如果翻译失败，返回原文
-            return jsonify({
-                'success': True,
-                'translation': text,
-                'original_text': text,
-                'note': '翻译服务暂时不可用，显示原文'
-            })
-            
-    except Exception as e:
-        logger.error(f"翻译错误: {e}")
-        return jsonify({
-            'success': False,
-            'error': str(e)
-        })
 
-def call_translate_api(text, target_language='zh'):
-    """
-    调用翻译API
-    
-    Args:
-        text: 要翻译的文本
-        target_language: 目标语言，默认为中文
-        
-    Returns:
-        翻译后的文本
-    """
-    try:
-        # 使用DeepSeek API进行翻译
-        endpoint = API_ENDPOINTS[2]  # DeepSeek API
-        api_key = api_key_pool.get_available_key()
-        
-        if not api_key:
-            logger.error("没有可用的API密钥进行翻译")
-            return None
-            
-        headers = {
-            'Content-Type': 'application/json',
-            'Authorization': f'Bearer {api_key}'
-        }
-        
-        prompt = f"请将以下英文文献标题翻译成中文，保持专业性和准确性，只返回翻译结果，不要添加任何解释：\n\n{text}"
-        
-        payload = {
-            'model': 'deepseek-chat',
-            'messages': [
-                {
-                    'role': 'user',
-                    'content': prompt
-                }
-            ],
-            'max_tokens': 200,
-            'temperature': 0.1
-        }
-        
-        response = requests.post(endpoint, headers=headers, json=payload, timeout=30)
-        
-        if response.status_code == 200:
-            data = response.json()
-            if 'choices' in data and len(data['choices']) > 0:
-                translation = data['choices'][0]['message']['content'].strip()
-                api_key_pool.report_success(api_key)
-                logger.info(f"翻译成功: {text[:50]}... -> {translation[:50]}...")
-                return translation
-            else:
-                api_key_pool.report_failure(api_key, "invalid_response")
-                logger.error("翻译API返回格式错误")
-                return None
-        else:
-            api_key_pool.report_failure(api_key, f"http_{response.status_code}")
-            logger.error(f"翻译API请求失败: {response.status_code} - {response.text}")
-            return None
-            
-    except Exception as e:
-        logger.error(f"翻译API调用异常: {e}")
-        return None
 
 @app.route('/stop_search', methods=['POST'])
 def stop_search():

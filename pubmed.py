@@ -9,6 +9,9 @@ import logging
 from typing import Dict, Optional
 from bs4 import BeautifulSoup
 
+# 导入AI提取器
+from src.ai_extractor import extract_info_with_ai
+
 # 导入增强版PubMed抓取器
 try:
     from enhanced_pubmed_scraper import EnhancedPubMedScraper
@@ -68,9 +71,13 @@ COUNTRY_CACHE_TTL = 3600  # 1小时过期
 ENABLE_WEB_SEARCH = True  # 是否启用web search功能
 REQUEST_DELAY = 2.0  # API请求间隔（秒），避免429错误
 
-# 配置日志
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+# 配置日志 - 启用调试模式
+logging.basicConfig(level=logging.DEBUG, format='%(asctime)s - %(levelname)s - [%(name)s:%(lineno)d] - %(message)s')
 logger = logging.getLogger(__name__)
+
+# 设置特定模块的日志级别
+logging.getLogger('pubmed').setLevel(logging.DEBUG)
+logging.getLogger('requests').setLevel(logging.WARNING)  # 减少第三方库的日志噪音
 
 # ================= API密钥池管理器 =================
 class APIKeyPoolManager:
@@ -318,7 +325,7 @@ def extract_sample_size(abstract_text):
             return match.group(1)
     return "需人工确认"
 
-def parse_record(article):
+def parse_record(article, enable_fulltext=False):
     """解析单篇文献，映射到目标表格列"""
     data = {}
     medline = article['MedlineCitation']
@@ -365,45 +372,26 @@ def parse_record(article):
         else:
             abstract_text = str(abs_content)
     
-    # 使用AI统一提取信息（不再依赖正则表达式）
-    logger.info("开始使用AI提取研究信息...")
-    
-    # 直接使用AI提取所有信息
-    print("  📤 正在将摘要/原文html发给AI询问中...")
-    ai_extracted = extract_info_with_ai(abstract_text)
-    print("  📥 AI数据已返回")
-    logger.info(f"AI提取结果：{ai_extracted}")
-    
-    # 更新数据字段
-    data['研究对象'] = ai_extracted.get('研究对象', "需人工确认")
-    data['样本量'] = ai_extracted.get('样本量', "需人工确认")
-    data['推荐补充剂量/用法'] = ai_extracted.get('推荐补充剂量/用法', "需人工确认")
-    data['作用机理'] = ai_extracted.get('作用机理', "需人工确认")
-    data['摘要主要内容'] = ai_extracted.get('摘要主要内容', "需人工确认")
-    data['结论摘要'] = ai_extracted.get('结论摘要', "需人工确认")  # 从AI提取结果中获取中文结论摘要
-    data['数据收集年份'] = ai_extracted.get('数据收集年份', "需人工确认")  # 从AI提取结果中获取数据收集年份
-    
-    # 9. 证据等级 (基于研究类型预判)
-    if "Meta-Analysis" in data['研究类型']:
-        data['证据等级'] = "Level 1"
-    elif "RCT" in data['研究类型']:
-        data['证据等级'] = "Level 2"
-    else:
-        data['证据等级'] = "待定"
-
     # 额外信息方便核对
     data['标题'] = article_data.get('ArticleTitle', '')
     data['PMID'] = medline.get('PMID', '')
-
+    
+    # 获取标题
+    article_title = article_data.get('ArticleTitle', '')
+    
     # 初始化免费全文状态字段
     data['免费全文状态'] = "未检查"
     data['免费全文链接数'] = 0
     data['全文提取状态'] = "未尝试"
-
-    # 如果启用全文提取功能，获取PMID并进行全文分析
-    if ENABLE_FULLTEXT_EXTRACTION and data['PMID']:
+    
+    # 首先检查和提取免费全文内容（如果启用）
+    fulltext_analysis = None
+    combined_text = abstract_text  # 默认只使用摘要
+    
+    if enable_fulltext and data['PMID']:
         try:
             print(f"  🔍 正在检查PMID {data['PMID']} 的全文可用性...")
+            print(f"    📡 发送免费全文检测请求...")
             
             # 使用全文分析功能
             fulltext_analysis = analyze_pmid_with_full_text(data['PMID'])
@@ -415,6 +403,35 @@ def parse_record(article):
                 data['免费全文链接数'] = links_count
                 data['全文提取状态'] = "可获取" if fulltext_analysis.get('extraction_success', False) else "获取失败"
                 print(f"  ✅ 发现免费全文: {links_count} 个链接")
+                print(f"    🎯 免费全文来源: {fulltext_analysis.get('source', 'unknown')}")
+                
+                if fulltext_analysis.get('extraction_success', False):
+                    print(f"    📥 免费全文内容提取成功")
+                else:
+                    print(f"    ⚠️ 免费全文内容提取失败")
+                
+                # 如果成功提取到全文内容，将其与摘要合并用于AI提取
+                if fulltext_analysis.get('extraction_success', False):
+                    extracted_content = fulltext_analysis.get('extracted_content', {})
+                    full_text_parts = []
+                    
+                    if extracted_content.get('title'):
+                        full_text_parts.append(f"标题: {extracted_content['title']}")
+                        print(f"    📄 提取到标题: {extracted_content['title'][:50]}...")
+                    if extracted_content.get('abstract'):
+                        full_text_parts.append(f"摘要: {extracted_content['abstract']}")
+                        print(f"    📄 提取到摘要: {len(extracted_content['abstract'])} 字符")
+                    if extracted_content.get('body_text'):
+                        # 截取前2000字符避免过长
+                        body_text = extracted_content['body_text'][:2000]
+                        full_text_parts.append(f"正文: {body_text}")
+                        print(f"    📄 提取到正文: {len(extracted_content['body_text'])} 字符 (截取2000字符)")
+                    
+                    if full_text_parts:
+                        full_text_content = "\n\n".join(full_text_parts)
+                        combined_text = f"{abstract_text}\n\n【全文内容】\n{full_text_content}"
+                        print("  📄 检测到免费全文，已将全文内容加入AI分析")
+                
             else:
                 data['免费全文状态'] = "付费"
                 data['免费全文链接数'] = 0
@@ -436,6 +453,7 @@ def parse_record(article):
             pmid = data['PMID']
             if pmid and ENHANCED_SCRAPER_AVAILABLE:
                 # 使用增强版scraper检查
+                enhanced_scraper = EnhancedPubMedScraper()
                 enhanced_result = enhanced_scraper.check_fulltext_comprehensive(pmid)
                 if enhanced_result:
                     data['免费全文状态'] = enhanced_result.get('free_status', '未检查')
@@ -458,6 +476,41 @@ def parse_record(article):
             data['免费全文状态'] = "检查失败"
             data['免费全文链接数'] = 0
             data['全文提取状态'] = "检查失败"
+
+    # 使用AI统一提取信息（现在包含全文内容，如果可用）
+    logger.info("开始使用AI提取研究信息...")
+    
+    # 根据是否有全文内容决定提示词
+    if data['免费全文状态'] == "免费" and fulltext_analysis and fulltext_analysis.get('extraction_success', False):
+        print("  🤖 正在将摘要+全文内容发给AI询问中...")
+        print("  📄 已集成免费全文内容到AI分析中...")
+        print(f"    📊 AI输入长度: {len(combined_text)} 字符")
+    else:
+        print("  🤖 正在将摘要发给AI询问中...")
+        print(f"    📊 AI输入长度: {len(combined_text)} 字符")
+    
+    ai_extracted = extract_info_with_ai(combined_text, article_title)
+    print("  📥 AI数据已返回")
+    logger.info(f"AI提取结果：{ai_extracted}")
+    
+    # 更新数据字段（包括标题翻译）
+    data['原文标题'] = ai_extracted.get('原文标题', article_title or "无标题")
+    data['翻译标题'] = ai_extracted.get('翻译标题', "翻译失败")
+    data['研究对象'] = ai_extracted.get('研究对象', "需人工确认")
+    data['样本量'] = ai_extracted.get('样本量', "需人工确认")
+    data['推荐补充剂量/用法'] = ai_extracted.get('推荐补充剂量/用法', "需人工确认")
+    data['作用机理'] = ai_extracted.get('作用机理', "需人工确认")
+    data['摘要主要内容'] = ai_extracted.get('摘要主要内容', "需人工确认")
+    data['结论摘要'] = ai_extracted.get('结论摘要', "需人工确认")  # 从AI提取结果中获取中文结论摘要
+    data['数据收集年份'] = ai_extracted.get('数据收集年份', "需人工确认")  # 从AI提取结果中获取数据收集年份
+    
+    # 9. 证据等级 (基于研究类型预判)
+    if "Meta-Analysis" in data['研究类型']:
+        data['证据等级'] = "Level 1"
+    elif "RCT" in data['研究类型']:
+        data['证据等级'] = "Level 2"
+    else:
+        data['证据等级'] = "待定"
 
     return data
 
@@ -611,9 +664,10 @@ def _call_ai_api(prompt: str, context: str) -> str:
     try:
         # 定义模型配置
         model_configs = [
+            ("gpt-5-mini", API_ENDPOINTS[0]),  # GPTGod + gpt-5-mini (默认模型)
             ("gpt-3.5-turbo", API_ENDPOINTS[0]),  # GPTGod + gpt-3.5
             ("gpt-4", API_ENDPOINTS[0]),  # GPTGod + gpt-4
-            ("deepseek-chat", API_ENDPOINTS[2])  # DeepSeek + deepseek-chat
+
         ]
         
         # 使用现有的extract_info_with_ai逻辑，但只获取简单文本结果
@@ -819,267 +873,7 @@ def extract_info_with_regex(abstract_text: str) -> Dict[str, str]:
     
     return result
 
-def extract_info_with_ai(abstract_text: str) -> Dict[str, str]:
-    """
-    使用GPT-4.1 API从摘要中提取结构化信息（主要方法）
-    
-    Args:
-        abstract_text: 文献摘要文本
-        
-    Returns:
-        包含提取信息的字典，包含以下字段：
-        - 研究对象
-        - 样本量  
-        - 推荐补充剂量/用法
-        - 作用机理
-        - 摘要主要内容
-        - 数据收集年份
-    """
-    if not abstract_text or abstract_text.strip() == "":
-        logger.warning("摘要文本为空，返回默认空值")
-        return {
-            "研究对象": "需人工确认",
-            "样本量": "需人工确认", 
-            "推荐补充剂量/用法": "需人工确认",
-            "作用机理": "需人工确认",
-            "摘要主要内容": "需人工确认",
-            "结论摘要": "需人工确认",
-            "国家": "需人工确认",
-            "数据收集年份": "需人工确认"
-        }
-    
-    # 构建全中文提示词，要求AI从摘要中提取特定信息
-    prompt = f"""
-请分析以下英文学术文献摘要，并提取以下八个方面的中文信息：
 
-**摘要原文：**
-{abstract_text}
-
-**请提取以下信息（如果摘要中没有相关信息，请标注"未明确说明"）：**
-
-1. **研究对象**：研究涉及的人群特征（年龄范围、性别、健康状况、BMI范围等）
-   - 例如：18-65岁健康成年人，肥胖女性，代谢综合征患者等
-   - 答案必须是中文，不能出现英文单词如"men"、"women"等
-
-2. **样本量**：研究中的参与者数量和类型
-   - 例如：120名参与者，60例患者等
-   - 答案必须是中文
-
-3. **推荐补充剂量/用法**：研究中的MCT或相关营养素补充方案
-   - 例如：每日30毫升MCT油，分2次服用；每餐前10克MCT等
-   - 答案必须是中文，数字和单位要清晰
-
-4. **作用机理**：MCT发挥效应的生物学机制
-   - 例如：通过生酮作用促进脂肪燃烧；提高代谢率；抑制食欲等
-   - 答案必须是中文，用科学术语描述
-
-5. **摘要主要内容**：用1-2句话概括该研究的重点发现和结论
-   - 例如：研究发现每日补充30毫升MCT油可以显著减少超重成年人的体脂含量
-   - 答案必须是中文，简洁明了
-
-6. **结论摘要**：研究的核心结论和研究意义，必须用中文表达
-   - 例如：本研究表明MCT油补充剂能够有效改善肥胖人群的体重和体脂分布，为临床营养干预提供了新的证据支持
-   - **强制性要求：答案必须是中文，不能使用英文** 
-   - 如果摘要中没有明确结论，请基于研究结果总结中文结论
-
-7. **国家**：研究进行所在的国家
-   - 例如：美国、中国、英国、德国、日本、澳大利亚等
-   - 只返回标准国家名称，如"USA"对应"美国"，"China"对应"中国"
-   - 绝不能包含城市名（如Beijing、Shanghai、New York、London等）
-   - 绝不能包含邮政编码（如H9X 3V9、M5V、V1M等）
-   - 绝不能包含机构名称（如University、Hospital、Institute等）
-   - 绝不能包含街道地址（如Street、Road、Avenue等）
-   - 如果无法确定准确的国家，标注"需人工确认"
-
-8. **数据收集年份**：研究实际数据收集的时间期间
-   - 例如：2018年1月至12月，2019年6月-2020年5月，2020年等
-   - 只返回具体年份或年份范围，不要包含发表年份
-   - 如果摘要中没有明确提到数据收集时间，标注"未明确说明"
-
-**请以JSON格式返回结果：**
-```json
-{{
-  "研究对象": "提取的中文内容",
-  "样本量": "提取的中文内容", 
-  "推荐补充剂量/用法": "提取的中文内容",
-  "作用机理": "提取的中文内容",
-  "摘要主要内容": "提取的中文内容",
-  "结论摘要": "提取的中文内容",
-  "国家": "提取的中文内容",
-  "数据收集年份": "提取的中文内容"
-}}
-```
-
-**重要要求：**
-- **结论摘要字段强制性要求：必须使用中文回答，不能包含任何英文内容**
-- 所有答案必须是纯中文，不能包含英文单词
-- **国家字段特别要求**：绝对不能返回城市、邮政编码、机构名称或地址信息
-- **数据收集年份字段特别要求**：必须区分发表年份和数据收集年份，发表年份不是数据收集年份
-- 只提取摘要中明确提到的信息，不要推断
-- 如果信息不完整，使用"未明确说明"或"需人工确认"
-- 返回格式必须是有效的JSON
-"""
-  
-    # 尝试不同的API端点和模型组合
-    model_configs = [
-        # 端点, 模型名称
-        ("gpt-3.5-turbo", API_ENDPOINTS[0]),  # GPTGod + gpt-3.5
-        ("gpt-4", API_ENDPOINTS[0]),  # GPTGod + gpt-4
-        ("deepseek-chat", API_ENDPOINTS[2])  # DeepSeek + deepseek-chat
-    ]
-    
-    print("  🤖 AI模型开始分析摘要内容...")
-    max_retries_per_config = 3  # 每个模型配置的最大重试次数
-    
-    for model_name, api_base_url in model_configs:
-        for attempt in range(max_retries_per_config):
-            # 从密钥池获取可用密钥
-            current_api_key = api_key_pool.get_available_key()
-            if not current_api_key:
-                logger.error("没有可用的API密钥，尝试下一个模型")
-                break
-                
-            headers = {
-                "Authorization": f"Bearer {current_api_key}",
-                "Content-Type": "application/json"
-            }
-            
-            payload = {
-                "model": model_name,
-                "messages": [
-                    {
-                        "role": "user", 
-                        "content": prompt
-                    }
-                ],
-                "max_tokens": 1000,
-                "temperature": 0.1
-            }
-            
-            try:
-                # 记录尝试信息（使用安全的日志记录）
-                if API_KEY_POOL_CONFIG.get("log_key_usage", True):
-                    key_id = api_key_pool._get_key_id(current_api_key)
-                    logger.info(f"尝试使用模型 {model_name} 在端点 {api_base_url}，尝试 {attempt + 1}/{max_retries_per_config}，密钥 {key_id}")
-                else:
-                    logger.info(f"尝试使用模型 {model_name} 在端点 {api_base_url}，尝试 {attempt + 1}/{max_retries_per_config}")
-                
-                # 添加请求间隔，避免429错误
-                time.sleep(REQUEST_DELAY)
-                
-                # 发送API请求
-                response = requests.post(api_base_url, headers=headers, json=payload, timeout=30)
-                
-                # 处理API响应
-                if response.status_code == 200:
-                    result = response.json()
-                    ai_content = result['choices'][0]['message']['content']
-                    
-                    # 记录成功信息
-                    api_key_pool.report_success(current_api_key)
-                    
-                    if API_KEY_POOL_CONFIG.get("log_key_usage", True):
-                        key_id = api_key_pool._get_key_id(current_api_key)
-                        logger.info(f"AI API调用成功，模型：{model_name}，密钥：{key_id}")
-                    else:
-                        logger.info(f"AI API调用成功，模型：{model_name}")
-                    
-                    # 提取JSON部分
-                    try:
-                        # 尝试从AI响应中提取JSON
-                        json_start = ai_content.find('{')
-                        json_end = ai_content.rfind('}') + 1
-                        if json_start != -1 and json_end != 0:
-                            json_str = ai_content[json_start:json_end]
-                            extracted_data = json.loads(json_str)
-                            
-                            # 验证提取的数据
-                            validated_data = validate_extracted_data(extracted_data)
-                            logger.info(f"成功提取信息")
-                            return validated_data
-                        else:
-                            raise ValueError("未找到有效的JSON格式")
-                            
-                    except (json.JSONDecodeError, ValueError) as e:
-                        # JSON解析失败也报告为失败，但不切换密钥
-                        api_key_pool.report_failure(current_api_key, "json_parse_error")
-                        logger.error(f"JSON解析失败：{e}")
-                        continue  # 重试当前模型
-                        
-                elif response.status_code == 429:
-                    # 请求频率过高
-                    api_key_pool.report_failure(current_api_key, "rate_limit")
-                    wait_time = REQUEST_DELAY * (2 ** attempt)  # 指数退避
-                    logger.warning(f"API请求频率过高，模型：{model_name}，等待 {wait_time} 秒后重试")
-                    time.sleep(wait_time)
-                    continue  # 重试当前模型
-                    
-                else:
-                    # 其他HTTP错误
-                    api_key_pool.report_failure(current_api_key, f"http_{response.status_code}")
-                    logger.error(f"API请求失败，模型：{model_name}，状态码：{response.status_code}")
-                    
-                    # 如果是认证错误（401/403），直接切换密钥
-                    if response.status_code in [401, 403]:
-                        logger.warning(f"认证失败，切换到下一个密钥")
-                        api_key_pool.rotate_key()
-                        continue  # 尝试下一个密钥
-                    else:
-                        continue  # 重试当前模型
-                    
-            except requests.exceptions.RequestException as e:
-                # 网络请求错误
-                api_key_pool.report_failure(current_api_key, "network_error")
-                logger.error(f"网络请求错误，模型：{model_name}，错误：{e}")
-                continue  # 重试当前模型
-                
-            except Exception as e:
-                # 其他异常
-                api_key_pool.report_failure(current_api_key, "unknown_error")
-                logger.error(f"AI信息提取过程发生错误，模型：{model_name}，错误：{e}")
-                continue  # 重试当前模型
-        
-        # 当前模型配置的所有重试都失败，尝试下一个模型
-        logger.warning(f"模型 {model_name} 在所有重试后仍然失败，尝试下一个模型")
-    
-    # 所有模型都失败
-    logger.warning("所有AI模型和密钥组合都调用失败，使用备用数据")
-    return get_fallback_data()
-
-def validate_extracted_data(data: Dict[str, str]) -> Dict[str, str]:
-    """
-    验证和清理提取的数据
-    """
-    validated = {}
-    for key in ["研究对象", "样本量", "推荐补充剂量/用法", "作用机理", "摘要主要内容", "结论摘要", "国家", "数据收集年份"]:
-        value = data.get(key, "N/A")
-        # 清理和验证值
-        if isinstance(value, str):
-            # 移除多余的空白字符
-            value = value.strip()
-            # 如果为空或包含无效内容，使用默认值
-            if not value or value.lower() in ["null", "none", "", "undefined"]:
-                value = "未明确说明"
-        else:
-            value = "未明确说明"
-        validated[key] = value
-    
-    return validated
-
-def get_fallback_data() -> Dict[str, str]:
-    """
-    当AI提取失败时返回的备用数据
-    """
-    return {
-        "研究对象": "需人工确认",
-        "样本量": "需人工确认", 
-        "推荐补充剂量/用法": "需人工确认",
-        "作用机理": "需人工确认",
-        "摘要主要内容": "需人工确认",
-        "结论摘要": "需人工确认",
-        "国家": "需人工确认",
-        "数据收集年份": "需人工确认"
-    }
 
 # ================= 全文提取功能 =================
 def check_full_text_availability(pmid: str) -> Dict[str, any]:
